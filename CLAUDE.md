@@ -13,9 +13,24 @@ runs real heat-transfer ODEs under the hood.
 
 ## Entry points
 
-- `index.html` — three screens: pregame / cook / score + compare modal
-- `js/app.js` — view-model, sim loop (RAF-driven), decision-card renderer
-- `js/simulator.js` — orchestrator; composes the 10 physics modules
+- `index.html` — **planner home** (default surface). Single-page flow:
+  pick a cook → pick a serve time → render timeline + .ics calendar +
+  text/share. Uses `js/menuLibrary.js` + `js/icsGenerator.js` only — no
+  physics modules loaded here.
+- `pitmaster.html` — the original three-screen physics simulator
+  (pregame / cook / score + compare modal). Linked from the planner
+  via the ⚙️ icon for the deep-dive crowd.
+- `reminder.html` — legacy redirect to `index.html?menu=brisket-picanha`
+  (kept so external links survive).
+- `js/menuLibrary.js` — schedule templates (`skewers`, `wings`,
+  `pork-belly`, `brisket-picanha`). Add new cooks here, in
+  `TEMPLATE_ORDER`, and they appear on the home grid.
+- `js/icsGenerator.js` — turns `(serveTime, templateId)` into events
+  / RFC 5545 .ics / shareable text. Reads from `menuLibrary`.
+- `js/app.js` (pitmaster) — view-model, sim loop (RAF-driven),
+  decision-card renderer.
+- `js/simulator.js` (pitmaster) — orchestrator; composes the 10
+  physics modules.
 
 ## Dev
 
@@ -39,16 +54,25 @@ stall plateau visible 148–175 °F; foil-wrap @ 150 °F finishes ~9 h.
 ## Conventions
 
 - Bilingual 中英对照: English primary, Chinese via `<span class="zh">` or
-  `<em>` inline. Decision cards carry `verdict`, `verdict_zh`, `why`,
+  `<em>` inline. Schedule events carry `title`, `title_zh`, `body`,
+  `body_zh`. Decision cards carry `verdict`, `verdict_zh`, `why`,
   `why_zh`, `label_zh`, `hint_zh`.
-- Progressive disclosure: default view hides telemetry, manual override,
-  history behind `<details>`. Only primary chart + decision cards visible.
+- Progressive disclosure: planner shows menu + time + button only;
+  timeline appears on click. Pitmaster default view hides telemetry,
+  manual override, history behind `<details>`. Only primary chart +
+  decision cards visible.
 - Status over numbers: phase pills (🟡 Stall) and trend arrows
   (▲ +0.3 °F/min) above the big readouts.
 - `[hidden] { display: none !important; }` at top of CSS — HTML5 `hidden`
   attribute silently loses to any later `display:` rule, so forcing it
   prevents the modal-close bug we hit.
 - IIFE modules attached to `window.SmokerSim.*`. No ES modules, no bundler.
+- Schedule offsets are **always relative to serve time** (negative =
+  before). The icsGenerator never re-reads wall clock to interpret
+  them — `serveAt` is the only anchor. Floating local time in .ics
+  output (no TZID, no Z) so cross-timezone imports stay intuitive.
+- URL state: planner reads `?menu=<id>&serve=<datetime-local>` on load
+  and writes them on selection, so a shared link reopens the same plan.
 
 ## Open items / ideas backlog
 
