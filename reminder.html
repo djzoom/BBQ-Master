@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>BBQ Reminder · 烧烤时间表提醒</title>
+<meta name="description" content="Pick a serve time, get an .ics calendar with 5-min-before reminders for every step of your brisket + picanha cook.">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css?v=2">
+<style>
+  .reminder-page {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 24px 16px max(32px, env(safe-area-inset-bottom)) 16px;
+  }
+  .reminder-page h1 {
+    font-size: clamp(1.5rem, 4vw, 2rem);
+    line-height: 1.2;
+    margin: 0 0 8px;
+  }
+  .reminder-page h1 .zh { display: inline; margin-left: 8px; opacity: 0.7; font-size: 0.65em; font-weight: 500; }
+  .reminder-lede { color: var(--text-secondary); margin: 0 0 24px; }
+  .reminder-lede em { font-style: normal; opacity: 0.75; display: block; margin-top: 4px; font-size: 0.875rem; }
+
+  .reminder-form {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: var(--shadow-sm);
+    display: grid;
+    gap: 14px;
+  }
+  .reminder-form label {
+    display: grid;
+    gap: 6px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .reminder-form label .hint {
+    font-weight: 400;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+  }
+  .reminder-form input[type="datetime-local"] {
+    font-family: inherit;
+    font-size: 1.125rem;
+    padding: 12px 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 48px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .reminder-form input[type="datetime-local"]:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: var(--shadow-focus);
+  }
+
+  details.plan-details {
+    margin-top: 4px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
+    background: var(--bg-subtle);
+  }
+  details.plan-details summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text);
+    list-style: none;
+  }
+  details.plan-details summary::-webkit-details-marker { display: none; }
+  details.plan-details summary::before { content: '▸ '; transition: transform 0.15s; display: inline-block; }
+  details.plan-details[open] summary::before { transform: rotate(90deg); }
+  details.plan-details p { color: var(--text-secondary); margin: 8px 0 0; font-size: 0.9rem; line-height: 1.5; }
+
+  .actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+  }
+  .btn {
+    font-family: inherit;
+    font-size: 1rem;
+    font-weight: 600;
+    padding: 12px 20px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-strong);
+    background: var(--bg-card);
+    color: var(--text);
+    cursor: pointer;
+    min-height: 48px;
+    transition: all 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .btn:hover { background: var(--bg-subtle); border-color: var(--text-muted); }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .btn-primary:hover { background: var(--green-deep); border-color: var(--green-deep); }
+  .btn-link {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-secondary);
+    text-decoration: none;
+    padding: 12px 8px;
+  }
+  .btn-link:hover { color: var(--text); background: transparent; }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%) translateY(80px);
+    background: var(--text);
+    color: var(--bg);
+    padding: 12px 20px;
+    border-radius: 999px;
+    font-weight: 500;
+    box-shadow: var(--shadow-lg);
+    transition: transform 0.25s ease;
+    pointer-events: none;
+    z-index: 100;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+
+  h2.timeline-heading {
+    font-size: 1.25rem;
+    margin: 32px 0 12px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  h2.timeline-heading .zh { display: inline; opacity: 0.65; font-size: 0.7em; font-weight: 500; }
+  .timeline-meta { color: var(--text-secondary); font-size: 0.875rem; margin: 0 0 16px; }
+
+  .timeline {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 6px;
+  }
+  .timeline li {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    gap: 12px;
+    align-items: start;
+  }
+  .timeline li[data-soon="true"] { border-left-color: var(--orange); background: var(--orange-soft); }
+  .timeline li[data-now="true"] { border-left-color: var(--red); background: var(--red-soft); }
+  .timeline .clock {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    padding-top: 1px;
+  }
+  .timeline .body { display: grid; gap: 2px; }
+  .timeline .title { font-weight: 600; color: var(--text); line-height: 1.35; }
+  .timeline .zh { display: block; color: var(--text-secondary); font-size: 0.875rem; line-height: 1.4; }
+  .timeline .desc { color: var(--text-secondary); font-size: 0.875rem; line-height: 1.5; margin-top: 4px; display: none; }
+  .timeline li[open-detail="true"] .desc { display: block; }
+  .timeline .day-label {
+    grid-column: 1 / -1;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    padding: 8px 4px 4px;
+  }
+
+  .footer-link {
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-light);
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .footer-link a { color: var(--text-secondary); }
+
+  @media (max-width: 480px) {
+    .timeline li { grid-template-columns: 56px 1fr; gap: 10px; padding: 10px 12px; }
+    .actions .btn { flex: 1 1 auto; justify-content: center; }
+  }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-inner">
+    <div class="header-brand">
+      <div class="brand-text">
+        <span class="brand-name">BBQ Reminder<span class="zh">· 烧烤时间表提醒</span></span>
+        <span class="brand-sub">Backwards-planned cook schedule · 上桌时间倒推</span>
+      </div>
+    </div>
+    <div class="header-controls">
+      <a href="index.html" class="btn btn-link" title="Pitmaster mode">⚙️</a>
+    </div>
+  </div>
+</header>
+
+<main class="reminder-page">
+  <h1>When are you eating?<span class="zh">几点开吃？</span></h1>
+  <p class="reminder-lede">
+    Pick your dinner serve time. Every step of the cook gets a calendar event with a 5-minute-before alarm.
+    <em>选好上桌时间，烧烤每一步都会进日历，提前 5 分钟提醒你。</em>
+  </p>
+
+  <form class="reminder-form" id="form" onsubmit="return false;">
+    <label>
+      Serve time <span class="hint">上桌时间</span>
+      <input type="datetime-local" id="serve-at" required>
+    </label>
+
+    <details class="plan-details">
+      <summary>What this schedule covers · 本时间表内容</summary>
+      <p>
+        4.284 kg brisket on lower rack + 1.788 kg picanha on upper rack of a drum smoker.
+        Calibration: 4 coals → 250°F (121°C), 6 coals → 300°F (149°C). Sides: potatoes, bell peppers, zucchini.
+        Total ~12 hours of work, mostly hands-off.
+        <br><br>
+        牛胸肉 4.284 kg 下层架 + Picanha 1.788 kg 上层架，桶式烟熏炉。
+        校准：4 炭 250°F (121°C)，6 炭 300°F (149°C)。配菜：土豆、彩椒、西葫芦。
+        全程约 12 小时，大多数时间不用动手。
+      </p>
+    </details>
+
+    <div class="actions">
+      <button type="button" id="btn-ics" class="btn btn-primary">📥 Download .ics</button>
+      <button type="button" id="btn-text" class="btn">📋 Copy text · 复制文本</button>
+      <button type="button" id="btn-share" class="btn" hidden>🔗 Share · 分享</button>
+    </div>
+  </form>
+
+  <h2 class="timeline-heading">Timeline preview <span class="zh">时间表预览</span></h2>
+  <p class="timeline-meta" id="timeline-meta"></p>
+  <ol class="timeline" id="timeline"></ol>
+
+  <div class="footer-link">
+    <span>17 events · 5-min reminders · floating local time</span>
+    <a href="index.html">Pitmaster mode →</a>
+  </div>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="js/icsGenerator.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var input = document.getElementById('serve-at');
+  var timeline = document.getElementById('timeline');
+  var meta = document.getElementById('timeline-meta');
+  var toast = document.getElementById('toast');
+  var ICS = window.SmokerSim.ICS;
+
+  function pad(n) { return String(n).padStart(2, '0'); }
+
+  function localInputValue(d) {
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+      + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  function getServeAt() {
+    var v = input.value;
+    if (!v) return null;
+    return new Date(v);
+  }
+
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(function () { toast.classList.remove('show'); }, 1800);
+  }
+
+  function render() {
+    var serveAt = getServeAt();
+    if (!serveAt || isNaN(serveAt.getTime())) {
+      timeline.innerHTML = '';
+      meta.textContent = '';
+      return;
+    }
+    var events = ICS.buildEvents(serveAt);
+    var startDay = events[0].day;
+    var serveDay = events[events.length - 1].day;
+    var totalHours = ((serveAt.getTime() - events[0].start.getTime()) / 3600000).toFixed(1);
+    meta.textContent = 'Start ' + events[0].clock + ' on ' + startDay
+      + (startDay === serveDay ? '' : ', serve ' + serveDay)
+      + ' · ' + totalHours + ' h total · ' + events.length + ' events';
+
+    var html = '';
+    var lastDay = null;
+    var now = Date.now();
+    events.forEach(function (e) {
+      if (e.day !== lastDay) {
+        html += '<li class="day-label">' + e.day + '</li>';
+        lastDay = e.day;
+      }
+      var soon = e.start.getTime() - now < 30 * 60000 && e.start.getTime() > now;
+      var nowing = now >= e.start.getTime() && now <= e.end.getTime();
+      html += '<li' + (soon ? ' data-soon="true"' : '') + (nowing ? ' data-now="true"' : '') + '>'
+        + '<div class="clock">' + e.clock + '</div>'
+        + '<div class="body">'
+        +   '<div class="title">' + e.title + '</div>'
+        +   '<span class="zh">' + e.title_zh + '</span>'
+        +   '<div class="desc">' + e.body + '<br><br><em>' + e.body_zh + '</em></div>'
+        + '</div>'
+        + '</li>';
+    });
+    timeline.innerHTML = html;
+
+    Array.prototype.forEach.call(timeline.querySelectorAll('li:not(.day-label)'), function (li) {
+      li.addEventListener('click', function () {
+        var open = li.getAttribute('open-detail') === 'true';
+        li.setAttribute('open-detail', open ? 'false' : 'true');
+      });
+    });
+  }
+
+  function downloadICS() {
+    var serveAt = getServeAt();
+    if (!serveAt) { showToast('Pick a serve time · 先选上桌时间'); return; }
+    var ics = ICS.buildICS(serveAt);
+    var blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'bbq-' + serveAt.toISOString().slice(0, 10) + '.ics';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    showToast('.ics downloaded · 已下载');
+  }
+
+  function copyText() {
+    var serveAt = getServeAt();
+    if (!serveAt) { showToast('Pick a serve time · 先选上桌时间'); return; }
+    var text = ICS.buildText(serveAt);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        showToast('Copied · 已复制');
+      }, function () {
+        showToast('Copy failed · 复制失败');
+      });
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); showToast('Copied · 已复制'); }
+      catch (e) { showToast('Copy failed · 复制失败'); }
+      ta.remove();
+    }
+  }
+
+  function shareLink() {
+    var serveAt = getServeAt();
+    if (!serveAt) { showToast('Pick a serve time · 先选上桌时间'); return; }
+    var url = location.origin + location.pathname + '?serve=' + encodeURIComponent(input.value);
+    if (navigator.share) {
+      navigator.share({
+        title: 'BBQ schedule · 烧烤时间表',
+        text: 'Serving at ' + serveAt.toLocaleString(),
+        url: url
+      }).catch(function () {});
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(function () { showToast('Link copied · 链接已复制'); });
+    }
+  }
+
+  // Init
+  var params = new URLSearchParams(location.search);
+  var preset = params.get('serve');
+  if (preset) {
+    input.value = preset;
+  } else {
+    var d = new Date();
+    var hour = d.getHours();
+    if (hour >= 14) {
+      d.setDate(d.getDate() + 1);
+    }
+    d.setHours(17, 30, 0, 0);
+    input.value = localInputValue(d);
+  }
+
+  if (navigator.share || navigator.clipboard) {
+    document.getElementById('btn-share').hidden = false;
+  }
+
+  document.getElementById('btn-ics').addEventListener('click', downloadICS);
+  document.getElementById('btn-text').addEventListener('click', copyText);
+  document.getElementById('btn-share').addEventListener('click', shareLink);
+  input.addEventListener('change', render);
+  input.addEventListener('input', render);
+
+  render();
+})();
+</script>
+
+</body>
+</html>
