@@ -1,15 +1,373 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Smoker Dynamics — your digital pitmaster</title>
-<meta name="description" content="Decision-support simulator for low-and-slow BBQ. Predicts the stall, recommends when to wrap, tells you when to pull.">
+<meta name="description" content="Pick a cook. Pick a time. Get a step-by-step BBQ plan with calendar reminders. Backed by a real heat-transfer physics engine.">
+<meta name="theme-color" content="#16A34A">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/styles.css?v=2">
+<style>
+  /* ── Planner home ───────────────────────────────────────────── */
+  .planner {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 24px 16px max(40px, env(safe-area-inset-bottom)) 16px;
+  }
+
+  .hero {
+    padding: 32px 0 24px;
+    text-align: center;
+  }
+  .hero h1 {
+    font-size: clamp(2rem, 6vw, 3rem);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    margin: 0 0 6px;
+    font-weight: 800;
+  }
+  .hero h1 .zh {
+    display: block;
+    font-size: 0.55em;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-top: 8px;
+    letter-spacing: 0;
+  }
+  .hero p.lede {
+    color: var(--text-secondary);
+    font-size: 1.0625rem;
+    margin: 0 auto;
+    max-width: 36ch;
+  }
+  .hero p.lede em {
+    font-style: normal;
+    opacity: 0.75;
+    display: block;
+    font-size: 0.9rem;
+    margin-top: 4px;
+  }
+
+  .step-label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 32px 0 12px;
+  }
+  .step-label .num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--text);
+    color: var(--bg);
+    font-size: 0.7rem;
+    margin-right: 8px;
+  }
+
+  /* ── Menu grid ──────────────────────────────────────────────── */
+  .menu-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+  .menu-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 20px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all 0.15s;
+    box-shadow: var(--shadow-xs);
+    font: inherit;
+    color: inherit;
+  }
+  .menu-card:hover {
+    border-color: var(--text-muted);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+  }
+  .menu-card[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+  .menu-card .icon {
+    font-size: 2.5rem;
+    line-height: 1;
+    margin-bottom: 10px;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.1));
+  }
+  .menu-card .name {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text);
+    margin: 0 0 2px;
+  }
+  .menu-card .name-zh {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin: 0 0 8px;
+  }
+  .menu-card .tagline {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin: 0;
+    line-height: 1.4;
+  }
+  .menu-card .tagline-zh {
+    display: block;
+    margin-top: 2px;
+  }
+
+  /* ── Time + action ──────────────────────────────────────────── */
+  .time-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    align-items: stretch;
+  }
+  .time-row input[type="datetime-local"] {
+    font-family: inherit;
+    font-size: 1.25rem;
+    font-weight: 600;
+    padding: 16px 18px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    color: var(--text);
+    min-height: 56px;
+    width: 100%;
+    box-sizing: border-box;
+    box-shadow: var(--shadow-xs);
+    font-variant-numeric: tabular-nums;
+  }
+  .time-row input[type="datetime-local"]:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: var(--shadow-focus);
+  }
+
+  .plan-btn {
+    font-family: inherit;
+    font-size: 1.0625rem;
+    font-weight: 700;
+    padding: 18px 24px;
+    border-radius: var(--radius);
+    border: 0;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+    min-height: 56px;
+    transition: all 0.15s;
+    margin-top: 16px;
+    width: 100%;
+    box-shadow: var(--shadow-sm);
+    letter-spacing: 0.01em;
+  }
+  .plan-btn:hover { background: var(--green-deep); transform: translateY(-1px); box-shadow: var(--shadow); }
+  .plan-btn:disabled {
+    background: var(--bg-subtle);
+    color: var(--text-muted);
+    cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
+  }
+  .plan-btn .zh { display: inline; opacity: 0.85; font-weight: 500; margin-left: 8px; }
+
+  /* ── Plan output ────────────────────────────────────────────── */
+  .plan-output {
+    margin-top: 48px;
+    scroll-margin-top: 16px;
+  }
+  .plan-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .plan-meta h2 {
+    font-size: 1.5rem;
+    margin: 0;
+    flex: 0 1 auto;
+  }
+  .plan-meta h2 .icon { margin-right: 8px; }
+  .plan-meta h2 .zh { display: inline; opacity: 0.65; font-size: 0.7em; font-weight: 500; margin-left: 6px; }
+  .plan-meta .stats {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    flex: 1 1 auto;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .plan-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 24px;
+  }
+  .action-btn {
+    font-family: inherit;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    padding: 11px 16px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-strong);
+    background: var(--bg-card);
+    color: var(--text);
+    cursor: pointer;
+    min-height: 44px;
+    transition: all 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .action-btn:hover { background: var(--bg-subtle); border-color: var(--text-muted); }
+  .action-btn.primary {
+    background: var(--text);
+    color: var(--bg);
+    border-color: var(--text);
+  }
+  .action-btn.primary:hover { background: var(--text-secondary); border-color: var(--text-secondary); }
+
+  .timeline { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+  .timeline li {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    gap: 12px;
+    align-items: start;
+    cursor: pointer;
+  }
+  .timeline li[data-now="true"] {
+    border-left-color: var(--red);
+    border-left-width: 4px;
+    background: var(--red-soft);
+  }
+  .timeline li[data-soon="true"] {
+    border-left-color: var(--orange);
+    background: var(--orange-soft);
+  }
+  .timeline li[data-past="true"] {
+    opacity: 0.5;
+  }
+  .timeline .clock {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    padding-top: 2px;
+  }
+  .timeline li[data-now="true"] .clock { color: var(--red); }
+  .timeline .body { display: grid; gap: 2px; }
+  .timeline .title { font-weight: 600; color: var(--text); line-height: 1.35; }
+  .timeline .title-zh { display: block; color: var(--text-secondary); font-size: 0.875rem; line-height: 1.4; }
+  .timeline .desc {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    line-height: 1.55;
+    margin-top: 8px;
+    display: none;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+  }
+  .timeline .desc em { font-style: normal; opacity: 0.75; display: block; margin-top: 4px; }
+  .timeline li[data-open="true"] .desc { display: block; }
+  .timeline .day-label {
+    grid-column: 1 / -1;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    padding: 12px 4px 4px;
+    cursor: default;
+    border: 0;
+    background: none;
+  }
+  .timeline .now-pill {
+    display: inline-block;
+    font-size: 0.625rem;
+    font-weight: 800;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--red);
+    color: #fff;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  /* ── Toast + footer ─────────────────────────────────────────── */
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%) translateY(100px);
+    background: var(--text);
+    color: var(--bg);
+    padding: 12px 22px;
+    border-radius: 999px;
+    font-weight: 500;
+    box-shadow: var(--shadow-lg);
+    transition: transform 0.25s ease;
+    pointer-events: none;
+    z-index: 100;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+
+  .planner-footer {
+    margin-top: 56px;
+    padding: 24px 16px;
+    text-align: center;
+    border-top: 1px solid var(--border-light);
+  }
+  .planner-footer p { color: var(--text-muted); font-size: 0.8125rem; margin: 0; }
+  .planner-footer a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .planner-footer a:hover { color: var(--accent); }
+  .planner-footer em { font-style: normal; opacity: 0.7; }
+
+  /* ── Responsive ─────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .menu-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .menu-card { padding: 18px 10px; }
+    .menu-card .icon { font-size: 2rem; }
+  }
+  @media (max-width: 420px) {
+    .timeline li { grid-template-columns: 52px 1fr; gap: 10px; padding: 10px 12px; }
+    .plan-meta .stats { text-align: left; flex: 1 1 100%; }
+  }
+
+  /* ── Reduced motion ─────────────────────────────────────────── */
+  @media (prefers-reduced-motion: reduce) {
+    .menu-card, .plan-btn, .toast { transition: none; }
+  }
+</style>
 </head>
 <body>
 
@@ -18,260 +376,328 @@
     <div class="header-brand">
       <div class="brand-text">
         <span class="brand-name">Smoker Dynamics<span class="zh">· 烟熏动力学</span></span>
-        <span class="brand-sub">Your digital pitmaster · 你的数字烤肉师傅</span>
+        <span class="brand-sub">Backwards-planned BBQ · 上桌时间倒推</span>
       </div>
     </div>
     <div class="header-controls">
-      <button class="theme-btn" id="btn-theme" title="Toggle dark mode · 切换深色"><span id="theme-icon">🌙</span></button>
-      <button class="help-btn" id="btn-help" title="Keyboard shortcuts · 键盘快捷键">?</button>
+      <a href="pitmaster.html" class="theme-btn" title="Pitmaster mode (physics simulator) · 深度模式">⚙️</a>
     </div>
   </div>
 </header>
 
-<main class="container">
+<main class="planner">
 
-  <!-- ═══ PREGAME — preset picker ═══ -->
-  <section id="screen-pregame" class="pregame">
-    <h1 class="pregame-title">What are you cooking today?<span class="zh">今天烤什么？</span></h1>
-    <p class="pregame-sub">
-      Pick a style. We'll light the fire, watch the stall, and tell you when to wrap and when to pull.
-      <span class="zh">选一个风格——我们负责点火、盯停滞期、在合适的时候提醒你包裹和出炉。</span>
+  <section class="hero">
+    <h1>What are you cooking?<span class="zh">你今天烤什么？</span></h1>
+    <p class="lede">
+      Pick a cook. Pick a time. Get a plan.
+      <em>选一道菜，选个时间，自动生成时间表。</em>
     </p>
-    <div class="preset-grid" id="preset-grid"><!-- filled by app.js --></div>
-    <div class="pregame-or">or · 或</div>
-    <div class="pregame-extras">
-      <button class="btn-ghost btn-compare" id="btn-compare">
-        🔀 &nbsp;Compare two styles<span class="zh">对比两种风格</span>
-      </button>
-      <button class="btn-ghost btn-demo" id="btn-demo">
-        ▶ &nbsp;Watch a demo cook<span class="zh">看一次示例烤肉</span>
-      </button>
-    </div>
   </section>
 
-  <!-- ═══ COMPARE — headless A/B ═══ -->
-  <section id="screen-compare" class="compare" hidden>
-    <div class="compare-header">
-      <button class="btn-ghost" id="btn-cmp-back">← Back</button>
-      <h1 class="compare-title">Compare two cooks<span class="zh">对比两种烤法</span></h1>
-    </div>
-    <p class="compare-hint">
-      Simulates both presets end-to-end with the same weather, then shows the winner on each axis.
-      <span class="zh">同一天气下跑完两个预设，告诉你每个维度谁赢。</span>
-    </p>
-    <div class="compare-pickers">
-      <label>
-        <span>Cook A · A 方</span>
-        <select id="cmp-a-preset"></select>
-      </label>
-      <label>
-        <span>Cook B · B 方</span>
-        <select id="cmp-b-preset"></select>
-      </label>
-      <button class="btn-primary" id="cmp-run">Run comparison<span class="zh">开始对比</span></button>
-    </div>
-    <div class="compare-status" id="cmp-status">
-      <span class="cmp-spinner" id="cmp-spinner" hidden></span>
-      <span id="cmp-status-text"></span>
-    </div>
-    <div class="compare-chart-wrap"><canvas id="cmp-chart"></canvas></div>
-    <div class="compare-verdict" id="cmp-verdict"></div>
-    <div class="compare-diff" id="cmp-diff"></div>
-  </section>
+  <h3 class="step-label"><span class="num">1</span>Pick a cook · 选一道菜</h3>
+  <div class="menu-grid" id="menu-grid" role="radiogroup" aria-label="Cook selection"></div>
 
-  <!-- ═══ MISSION CONTROL — active cook ═══ -->
-  <section id="screen-cook" class="cook" hidden>
-
-    <!-- Status line: phase + ETA -->
-    <div class="status-line">
-      <div class="status-phase">
-        <span class="phase-dot" id="phase-dot"></span>
-        <span class="phase-name" id="phase-name">Warming up</span>
-      </div>
-      <div class="status-eta">
-        <span class="eta-label">Ready by · 预计</span>
-        <span class="eta-value" id="eta-value">—</span>
-        <span class="eta-range" id="eta-range"></span>
-      </div>
-    </div>
-    <div class="progress-bar" aria-label="cook progress">
-      <div class="progress-fill" id="progress-fill"></div>
-    </div>
-
-    <!-- Phase flow strip -->
-    <nav class="flow-strip" id="flow-strip" aria-label="Cook phases">
-      <span class="flow-step" data-step="prep">Prep<em>准备</em></span>
-      <span class="flow-step" data-step="bark_build">Smoke<em>烟熏</em></span>
-      <span class="flow-step" data-step="stall">Stall<em>停滞</em></span>
-      <span class="flow-step" data-step="wrap">Wrap<em>包裹</em></span>
-      <span class="flow-step" data-step="push">Finish<em>收尾</em></span>
-      <span class="flow-step" data-step="rest">Rest<em>静置</em></span>
-      <span class="flow-step" data-step="slice">Slice<em>切片</em></span>
-    </nav>
-
-    <!-- Primary readouts — just two big numbers + sparklines -->
-    <section class="primary-readouts">
-      <div class="pr-card pr-pit">
-        <div class="pr-label">Pit · 炉温</div>
-        <div class="pr-value"><span id="pr-pit-val">—</span><span class="pr-unit">°F</span></div>
-        <canvas class="pr-spark" id="spark-pit" width="120" height="32"></canvas>
-        <div class="pr-sub" id="pr-pit-sub">idle</div>
-      </div>
-      <div class="pr-card pr-core">
-        <div class="pr-label">Meat · 肉芯</div>
-        <div class="pr-value"><span id="pr-core-val">—</span><span class="pr-unit">°F</span></div>
-        <canvas class="pr-spark" id="spark-core" width="120" height="32"></canvas>
-        <div class="pr-sub" id="pr-core-sub">0.0 °F/min</div>
-      </div>
-    </section>
-
-    <!-- Always-visible primary chart: pit + meat curves -->
-    <section class="main-chart-card">
-      <div class="main-chart-header">
-        <h3>Temperature curves · 温度曲线</h3>
-        <div class="main-chart-legend">
-          <span class="lg pit">Pit 炉温</span>
-          <span class="lg core">Meat 肉芯</span>
-        </div>
-      </div>
-      <div class="main-chart-wrap"><canvas id="chart-primary"></canvas></div>
-    </section>
-
-    <!-- Decision cards stack -->
-    <section class="cards-stack" id="cards-stack"><!-- filled dynamically --></section>
-
-    <!-- Simulation controls -->
-    <section class="sim-bar">
-      <button class="btn-primary" id="btn-start">Begin cook<em>开始</em></button>
-      <button class="btn-ghost" id="btn-pause" disabled>Pause<em>暂停</em></button>
-      <button class="btn-ghost" id="btn-reset">Start over<em>重来</em></button>
-      <button class="btn-ghost" id="btn-notify" title="Toggle audio + desktop alerts · 声音和桌面通知">🔔 Alerts</button>
-      <span class="sim-speed">
-        <label for="in-speed">Speed · 速度</label>
-        <select id="in-speed">
-          <option value="60">1×</option>
-          <option value="1800">30×</option>
-          <option value="3600" selected>60×</option>
-          <option value="18000">300×</option>
-          <option value="36000">600×</option>
-        </select>
-      </span>
-      <span class="sim-clock"><span id="sim-clock-val">0:00</span> elapsed · 已用</span>
-    </section>
-
-    <!-- Progressive disclosure: Telemetry -->
-    <details class="disclosure">
-      <summary>Telemetry · 遥测 · 5-curve chart</summary>
-      <div class="chart-title-row">
-        <div class="chart-legend">
-          <span class="lg pit">T_pit</span>
-          <span class="lg core">T_core</span>
-          <span class="lg surf">T_surf</span>
-          <span class="lg w">w (water)</span>
-          <span class="lg c">C (collagen)</span>
-        </div>
-      </div>
-      <div class="chart-wrap">
-        <canvas id="chart-main"></canvas>
-      </div>
-    </details>
-
-    <!-- Progressive disclosure: Manual events -->
-    <details class="disclosure">
-      <summary>Override · 手动操作 · manual events &amp; damper</summary>
-      <div class="event-grid">
-        <button class="ev-btn" data-ev="ignite-6"><span class="ev-icon">🔥</span>Ignite 6</button>
-        <button class="ev-btn" data-ev="ignite-12"><span class="ev-icon">🔥</span>Ignite 12</button>
-        <button class="ev-btn" data-ev="refuel-3"><span class="ev-icon">＋</span>+3 coals</button>
-        <button class="ev-btn" data-ev="refuel-6"><span class="ev-icon">＋</span>+6 coals</button>
-        <button class="ev-btn" data-ev="wood"><span class="ev-icon">🪵</span>Wood</button>
-        <button class="ev-btn" data-ev="wrap-butcher_paper"><span class="ev-icon">📜</span>Paper</button>
-        <button class="ev-btn" data-ev="wrap-aluminum_foil"><span class="ev-icon">🟦</span>Foil</button>
-        <button class="ev-btn" data-ev="wrap-none"><span class="ev-icon">✂</span>Unwrap</button>
-        <button class="ev-btn" data-ev="lid-30"><span class="ev-icon">↑</span>Lid 30s</button>
-        <button class="ev-btn" data-ev="spritz"><span class="ev-icon">💧</span>Spritz<em>喷雾</em></button>
-        <button class="ev-btn" data-ev="damper-down"><span class="ev-icon">▼</span>Damper −10</button>
-        <button class="ev-btn" data-ev="damper-up"><span class="ev-icon">▲</span>Damper +10</button>
-        <button class="ev-btn danger" data-ev="pull"><span class="ev-icon">🧺</span>Pull</button>
-        <button class="ev-btn danger" data-ev="slice"><span class="ev-icon">🔪</span>Slice</button>
-      </div>
-      <div class="damper-row">
-        <span>Damper</span>
-        <span class="damper-val" id="damper-val">70%</span>
-      </div>
-    </details>
-
-    <!-- Progressive disclosure: Timeline of fired events -->
-    <details class="disclosure">
-      <summary>History · 时间轴 · event timeline</summary>
-      <div class="timeline-wrap">
-        <div class="timeline-axis" id="timeline-axis"></div>
-        <div class="timeline-track" id="timeline-track"></div>
-      </div>
-      <div class="event-log" id="event-log"></div>
-    </details>
-
-  </section>
-
-  <!-- ═══ Keyboard-shortcuts modal ═══ -->
-  <div class="modal-backdrop" id="modal-help" hidden>
-    <div class="modal-card">
-      <button class="modal-close" id="modal-close" aria-label="Close">✕</button>
-      <h2>Keyboard shortcuts<span class="zh">键盘快捷键</span></h2>
-      <dl class="kbd-list">
-        <dt><kbd>Space</kbd></dt><dd>Start / Pause · 开始 / 暂停</dd>
-        <dt><kbd>R</kbd></dt><dd>Reset · 重来</dd>
-        <dt><kbd>W</kbd></dt><dd>Wrap (butcher paper) · 包屠夫纸</dd>
-        <dt><kbd>F</kbd></dt><dd>Wrap foil · 包铝箔</dd>
-        <dt><kbd>+</kbd></dt><dd>Add 3 coals · 加 3 块炭</dd>
-        <dt><kbd>S</kbd></dt><dd>Spritz · 喷雾</dd>
-        <dt><kbd>D</kbd></dt><dd>Dark mode · 深色切换</dd>
-        <dt><kbd>Esc</kbd></dt><dd>Close this dialog · 关闭弹窗</dd>
-        <dt><kbd>?</kbd></dt><dd>This help · 这个帮助</dd>
-      </dl>
-      <button class="btn-primary modal-ok" id="modal-ok">Got it · 知道了</button>
-    </div>
+  <h3 class="step-label"><span class="num">2</span>When are you eating? · 几点开吃？</h3>
+  <div class="time-row">
+    <input type="datetime-local" id="serve-at" required aria-label="Serve time">
   </div>
 
-  <!-- ═══ POST-COOK — scorecard ═══ -->
-  <section id="screen-score" class="score" hidden>
-    <h1 class="score-title">Cook complete<span class="zh">烤制完成</span></h1>
-    <div class="score-grid">
-      <div class="score-item"><span>Doneness<em>熟度</em></span><strong id="sc-done">—</strong></div>
-      <div class="score-item"><span>Juicy<em>多汁</em></span><strong id="sc-juicy">—</strong></div>
-      <div class="score-item"><span>Bark<em>树皮</em></span><strong id="sc-bark">—</strong></div>
-      <div class="score-item"><span>Smoke<em>烟味</em></span><strong id="sc-smoke">—</strong></div>
-      <div class="score-item overall"><span>Overall<em>总分</em></span><strong id="sc-overall">—</strong></div>
+  <button type="button" id="btn-plan" class="plan-btn" disabled>
+    Plan my cook<span class="zh">生成时间表</span>
+  </button>
+
+  <section class="plan-output" id="plan-output" hidden aria-live="polite">
+    <div class="plan-meta">
+      <h2 id="plan-title"></h2>
+      <div class="stats" id="plan-stats"></div>
     </div>
-    <div class="score-narrative" id="score-narrative"></div>
-    <button class="btn-primary" id="btn-again">Cook again<em>再烤一次</em></button>
+
+    <div class="plan-actions">
+      <button type="button" id="btn-ics" class="action-btn primary">📥 <span>Calendar</span> <span class="zh">日历</span></button>
+      <button type="button" id="btn-text" class="action-btn">📋 <span>Text</span> <span class="zh">文本</span></button>
+      <button type="button" id="btn-share" class="action-btn" hidden>🔗 <span>Share</span> <span class="zh">分享</span></button>
+    </div>
+
+    <ol class="timeline" id="timeline"></ol>
   </section>
 
 </main>
 
-<!-- Libraries -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.1.0/dist/chartjs-plugin-annotation.min.js"></script>
+<footer class="planner-footer">
+  <p>
+    Powered by a real heat-transfer physics engine. <em>烧烤背后是真实的传热模型。</em>
+    <br><br>
+    <a href="pitmaster.html">⚙️ Pitmaster mode →</a>
+    &nbsp;·&nbsp;
+    <a href="https://github.com/djzoom/BBQ-Master">GitHub</a>
+  </p>
+</footer>
 
-<!-- Smoker physics + logic modules -->
-<script src="js/constants.js"></script>
-<script src="js/heatDiffusion.js"></script>
-<script src="js/stallModel.js"></script>
-<script src="js/collagenModel.js"></script>
-<script src="js/smokeModel.js"></script>
-<script src="js/fireModel.js"></script>
-<script src="js/pitModel.js"></script>
-<script src="js/restModel.js"></script>
-<script src="js/safety.js?v=1"></script>
-<script src="js/constraints.js"></script>
-<script src="js/simulator.js"></script>
-<script src="js/monteCarlo.js"></script>
-<script src="js/decisions.js?v=3"></script>
-<script src="js/presets.js?v=3"></script>
-<script src="js/notify.js?v=1"></script>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<!-- UI controller -->
-<script src="js/app.js?v=3"></script>
+<script src="js/menuLibrary.js"></script>
+<script src="js/icsGenerator.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var Menu = window.SmokerSim.Menu;
+  var ICS = window.SmokerSim.ICS;
+
+  var grid = document.getElementById('menu-grid');
+  var input = document.getElementById('serve-at');
+  var btnPlan = document.getElementById('btn-plan');
+  var output = document.getElementById('plan-output');
+  var planTitle = document.getElementById('plan-title');
+  var planStats = document.getElementById('plan-stats');
+  var timelineEl = document.getElementById('timeline');
+  var toast = document.getElementById('toast');
+
+  var state = {
+    menuId: null,
+    serveAt: null,
+    planned: false
+  };
+
+  // ─── Helpers ────────────────────────────────────────────────
+  function pad(n) { return String(n).padStart(2, '0'); }
+
+  function localInputValue(d) {
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+      + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  function defaultServeTime(cookHours) {
+    var d = new Date();
+    var hour = d.getHours();
+    // For long cooks (>4h), if it's already past noon, default to tomorrow.
+    // For short cooks, default to today's dinner if there's still time.
+    var threshold = (cookHours && cookHours > 4) ? 6 : 14;
+    if (hour >= threshold) {
+      d.setDate(d.getDate() + 1);
+    }
+    d.setHours(18, 30, 0, 0);
+    return d;
+  }
+
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(function () { toast.classList.remove('show'); }, 1800);
+  }
+
+  function syncURL() {
+    var params = new URLSearchParams();
+    if (state.menuId) params.set('menu', state.menuId);
+    if (state.serveAt) params.set('serve', input.value);
+    var newURL = location.pathname + (params.toString() ? '?' + params.toString() : '');
+    history.replaceState(null, '', newURL);
+  }
+
+  // ─── Render menu cards ──────────────────────────────────────
+  function renderMenu() {
+    var html = Menu.list().map(function (tpl) {
+      return ''
+        + '<button type="button" class="menu-card" data-id="' + tpl.id + '" '
+        +   'role="radio" aria-pressed="false" aria-label="' + tpl.name + ' · ' + tpl.name_zh + '">'
+        +   '<span class="icon">' + tpl.icon + '</span>'
+        +   '<span class="name">' + tpl.name + '</span>'
+        +   '<span class="name-zh">' + tpl.name_zh + '</span>'
+        +   '<span class="tagline">' + tpl.tagline + '<span class="tagline-zh">' + tpl.tagline_zh + '</span></span>'
+        + '</button>';
+    }).join('');
+    grid.innerHTML = html;
+    Array.prototype.forEach.call(grid.querySelectorAll('.menu-card'), function (card) {
+      card.addEventListener('click', function () {
+        selectMenu(card.dataset.id);
+      });
+    });
+  }
+
+  function selectMenu(menuId) {
+    state.menuId = menuId;
+    Array.prototype.forEach.call(grid.querySelectorAll('.menu-card'), function (card) {
+      var pressed = card.dataset.id === menuId;
+      card.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+    });
+    var tpl = Menu.get(menuId);
+    if (tpl && !state.serveAt) {
+      // First time picking: set a sensible default if user hasn't set one.
+      var d = defaultServeTime(tpl.cookHours);
+      input.value = localInputValue(d);
+      state.serveAt = d;
+    }
+    btnPlan.disabled = !state.menuId;
+    syncURL();
+  }
+
+  // ─── Plan rendering ─────────────────────────────────────────
+  function renderPlan() {
+    if (!state.menuId || !state.serveAt) return;
+    var tpl = Menu.get(state.menuId);
+    var events = ICS.buildEvents(state.serveAt, state.menuId);
+
+    planTitle.innerHTML = '<span class="icon">' + tpl.icon + '</span>' + tpl.name
+      + '<span class="zh">· ' + tpl.name_zh + '</span>';
+
+    var startTime = events[0].clock + ' ' + events[0].day;
+    var serveTime = events[events.length - 1].clock;
+    var totalH = ((state.serveAt.getTime() - events[0].start.getTime()) / 3600000);
+    var hStr = totalH >= 1 ? totalH.toFixed(totalH < 3 ? 1 : 0) + ' h' : Math.round(totalH * 60) + ' min';
+    planStats.textContent = 'Start ' + startTime + ' · ' + events.length + ' steps · ' + hStr + ' total';
+
+    var now = Date.now();
+    var html = '';
+    var lastDay = null;
+    var nowFound = false;
+    events.forEach(function (e) {
+      if (e.day !== lastDay) {
+        html += '<li class="day-label">' + e.day + '</li>';
+        lastDay = e.day;
+      }
+      var endMs = e.end.getTime();
+      var startMs = e.start.getTime();
+      var isPast = endMs < now;
+      var isNow = !nowFound && now >= startMs && now <= endMs;
+      var isSoon = !nowFound && !isNow && (startMs - now) < 30 * 60000 && startMs > now;
+      if (isNow) nowFound = true;
+      var attrs = '';
+      if (isPast) attrs += ' data-past="true"';
+      if (isNow) attrs += ' data-now="true"';
+      if (isSoon) attrs += ' data-soon="true"';
+      html += '<li' + attrs + '>'
+        + '<div class="clock">' + e.clock + '</div>'
+        + '<div class="body">'
+        +   '<div class="title">' + e.title + (isNow ? ' <span class="now-pill">Now</span>' : '') + '</div>'
+        +   '<span class="title-zh">' + e.title_zh + '</span>'
+        +   '<div class="desc">' + e.body + '<br><em>' + e.body_zh + '</em></div>'
+        + '</div>'
+        + '</li>';
+    });
+    timelineEl.innerHTML = html;
+
+    Array.prototype.forEach.call(timelineEl.querySelectorAll('li:not(.day-label)'), function (li) {
+      li.addEventListener('click', function () {
+        var open = li.getAttribute('data-open') === 'true';
+        li.setAttribute('data-open', open ? 'false' : 'true');
+      });
+    });
+
+    output.hidden = false;
+    state.planned = true;
+
+    // Scroll to "now" step if present, else to plan top
+    var target = timelineEl.querySelector('li[data-now="true"]')
+      || timelineEl.querySelector('li[data-soon="true"]')
+      || output;
+    setTimeout(function () {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  }
+
+  function downloadICS() {
+    if (!state.menuId || !state.serveAt) return;
+    var tpl = Menu.get(state.menuId);
+    var ics = ICS.buildICS(state.serveAt, state.menuId);
+    var blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = tpl.id + '-' + state.serveAt.toISOString().slice(0, 10) + '.ics';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    showToast('Calendar downloaded · 已下载');
+  }
+
+  function copyText() {
+    if (!state.menuId || !state.serveAt) return;
+    var text = ICS.buildText(state.serveAt, state.menuId);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { showToast('Copied · 已复制'); },
+        function () { showToast('Copy failed · 复制失败'); }
+      );
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); showToast('Copied · 已复制'); }
+      catch (e) { showToast('Copy failed · 复制失败'); }
+      ta.remove();
+    }
+  }
+
+  function shareLink() {
+    if (!state.menuId || !state.serveAt) return;
+    var url = location.origin + location.pathname + location.search;
+    var tpl = Menu.get(state.menuId);
+    if (navigator.share) {
+      navigator.share({
+        title: tpl.name + ' · ' + tpl.name_zh,
+        text: 'Cooking ' + tpl.name + ' for ' + input.value,
+        url: url
+      }).catch(function () {});
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(function () { showToast('Link copied · 链接已复制'); });
+    }
+  }
+
+  // ─── Init ───────────────────────────────────────────────────
+  renderMenu();
+
+  var params = new URLSearchParams(location.search);
+  var menuParam = params.get('menu');
+  var serveParam = params.get('serve');
+
+  if (serveParam) {
+    input.value = serveParam;
+    state.serveAt = new Date(serveParam);
+  } else {
+    var d = defaultServeTime(2); // generic default before menu is picked
+    input.value = localInputValue(d);
+    state.serveAt = d;
+  }
+
+  if (menuParam && Menu.get(menuParam)) {
+    selectMenu(menuParam);
+  }
+
+  if (navigator.share || (navigator.clipboard && navigator.clipboard.writeText)) {
+    document.getElementById('btn-share').hidden = false;
+  }
+
+  input.addEventListener('change', function () {
+    var v = input.value;
+    state.serveAt = v ? new Date(v) : null;
+    syncURL();
+    if (state.planned) renderPlan();
+  });
+  input.addEventListener('input', function () {
+    var v = input.value;
+    state.serveAt = v ? new Date(v) : null;
+  });
+
+  btnPlan.addEventListener('click', function () {
+    if (!state.menuId || !state.serveAt) return;
+    renderPlan();
+  });
+
+  document.getElementById('btn-ics').addEventListener('click', downloadICS);
+  document.getElementById('btn-text').addEventListener('click', copyText);
+  document.getElementById('btn-share').addEventListener('click', shareLink);
+
+  // Auto-render plan if URL pre-selects everything
+  if (state.menuId && state.serveAt) {
+    renderPlan();
+  }
+})();
+</script>
 
 </body>
 </html>
