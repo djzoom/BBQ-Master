@@ -13,20 +13,31 @@ runs real heat-transfer ODEs under the hood.
 
 ## Entry points
 
-- `index.html` — **planner home** (default surface). Single-page flow:
-  pick a cook → pick a serve time → render timeline + .ics calendar +
-  text/share. Uses `js/menuLibrary.js` + `js/icsGenerator.js` only — no
-  physics modules loaded here.
+- `index.html` — **Smoker Almanac** home (default surface). Hipster
+  almanac aesthetic (cream paper, Fraunces serif, ember accent). Live
+  calculator: 4 sections of inputs (THE CUT / THE FIRE / THE WRAP &
+  PULL / THE REST) → 5-dimension quality score (Tenderness, Juiciness,
+  Smoke, Doneness, Safety) + diagnostics → schedule with .ics, text,
+  share, and a `🔔 Live timer` that fires browser Notifications at
+  step boundaries. Uses `menuLibrary` + `qualityModel` + `icsGenerator`.
+  No physics ODE solver here — the score is a fast heuristic grounded
+  in PHYSICS.md / OPERATIONS.md.
 - `pitmaster.html` — the original three-screen physics simulator
-  (pregame / cook / score + compare modal). Linked from the planner
-  via the ⚙️ icon for the deep-dive crowd.
-- `reminder.html` — legacy redirect to `index.html?menu=brisket-picanha`
-  (kept so external links survive).
-- `js/menuLibrary.js` — schedule templates (`skewers`, `wings`,
-  `pork-belly`, `brisket-picanha`). Add new cooks here, in
-  `TEMPLATE_ORDER`, and they appear on the home grid.
-- `js/icsGenerator.js` — turns `(serveTime, templateId)` into events
-  / RFC 5545 .ics / shareable text. Reads from `menuLibrary`.
+  (pregame / cook / score + compare modal). Reachable from the
+  almanac via the "Deep mode →" link in the masthead.
+- `reminder.html` — legacy redirect to `index.html?preset=brisket-picanha`.
+- `js/menuLibrary.js` — hand-tuned schedule templates (`skewers`,
+  `wings`, `pork-belly`, `brisket-picanha`). Quick-start chips on the
+  home page apply both calculator inputs and the matching template.
+- `js/qualityModel.js` — 5-dimension scorer + meat / equipment / wrap /
+  wood / rest catalogs + `buildGenericSchedule(cfg, cookHr)` that
+  produces a fallback timetable for cuts without a hand-tuned template.
+- `js/icsGenerator.js` — turns `(serveAt, source)` → events / RFC 5545
+  .ics / shareable text. `source` can be a templateId or an inline
+  `{ id, name, name_zh, icon, schedule }` object (so generic schedules
+  flow through the same path as presets).
+- `.github/workflows/pages.yml` — deterministic Pages deploy on push to
+  `main`. Avoids the "Deploy from a branch" Settings cache issues.
 - `js/app.js` (pitmaster) — view-model, sim loop (RAF-driven),
   decision-card renderer.
 - `js/simulator.js` (pitmaster) — orchestrator; composes the 10
@@ -71,8 +82,21 @@ stall plateau visible 148–175 °F; foil-wrap @ 150 °F finishes ~9 h.
   before). The icsGenerator never re-reads wall clock to interpret
   them — `serveAt` is the only anchor. Floating local time in .ics
   output (no TZID, no Z) so cross-timezone imports stay intuitive.
-- URL state: planner reads `?menu=<id>&serve=<datetime-local>` on load
-  and writes them on selection, so a shared link reopens the same plan.
+- URL state: home reads `?preset|meat|w|pit|pull|wrap|serve` on load
+  and writes them on input change, so a shared link reopens the same
+  configured cook.
+- Quality scoring is a **fast heuristic**, not the full ODE solver.
+  Each scoring function cites the PHYSICS.md section it reflects
+  (e.g. `scoreTenderness` ↔ §4 collagen kinetics). The full simulator
+  remains available in `pitmaster.html` for the deep dive — it is the
+  source of truth and the heuristic must stay numerically close
+  (target: ±10 of the full model in nominal scenarios).
+- Hipster almanac visual identity: cream paper (`#F4ECDD`), ink
+  (`#1F1A14`), ember accent (`#C84B23`), Fraunces serif display +
+  Inter body + JetBrains Mono numerics, dotted dividers, double-bordered
+  masthead, stamp-style verdict badge. Defined inline in `index.html`
+  — `css/styles.css` is the pitmaster theme and is not loaded by the
+  almanac.
 
 ## Open items / ideas backlog
 
