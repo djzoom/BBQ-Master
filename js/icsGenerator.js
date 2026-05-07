@@ -23,16 +23,24 @@
     return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   }
 
-  function resolveTemplate(templateId) {
-    var Menu = window.SmokerSim && window.SmokerSim.Menu;
-    if (!Menu) throw new Error('menuLibrary.js must load before icsGenerator.js');
-    var tpl = Menu.get(templateId);
-    if (!tpl) throw new Error('Unknown template: ' + templateId);
-    return tpl;
+  // Resolve `source` into { schedule, name, name_zh, icon, id }.
+  // Source can be:
+  //   - a string templateId (looked up in window.SmokerSim.Menu)
+  //   - an object { schedule, name, name_zh, icon, id } directly
+  function resolveSource(source) {
+    if (typeof source === 'string') {
+      var Menu = window.SmokerSim && window.SmokerSim.Menu;
+      if (!Menu) throw new Error('menuLibrary.js must load before icsGenerator.js');
+      var tpl = Menu.get(source);
+      if (!tpl) throw new Error('Unknown template: ' + source);
+      return tpl;
+    }
+    if (source && Array.isArray(source.schedule)) return source;
+    throw new Error('icsGenerator: source must be a templateId or {schedule}');
   }
 
-  function buildEvents(serveAt, templateId) {
-    var tpl = resolveTemplate(templateId);
+  function buildEvents(serveAt, source) {
+    var tpl = resolveSource(source);
     return tpl.schedule.map(function (step, i) {
       var start = new Date(serveAt.getTime() + step.offsetMin * 60000);
       var end = new Date(start.getTime() + step.dur * 60000);
@@ -73,12 +81,12 @@
     return out.join('\r\n');
   }
 
-  function buildICS(serveAt, templateId) {
-    var tpl = resolveTemplate(templateId);
-    var events = buildEvents(serveAt, templateId);
+  function buildICS(serveAt, source) {
+    var tpl = resolveSource(source);
+    var events = buildEvents(serveAt, source);
     var stamp = fmtUTCStamp(new Date());
     var slug = fmtFloating(serveAt);
-    var calName = tpl.name + ' · ' + tpl.name_zh;
+    var calName = (tpl.name || 'BBQ Cook') + (tpl.name_zh ? ' · ' + tpl.name_zh : '');
     var lines = [
       'BEGIN:VCALENDAR',
       'VERSION:2.0',
@@ -91,7 +99,7 @@
       var summary = e.title + ' · ' + e.title_zh;
       var description = e.body + '\n\n' + e.body_zh;
       lines.push('BEGIN:VEVENT');
-      lines.push(fold('UID:' + tpl.id + '-' + slug + '-' + i + '@smoker-dynamics'));
+      lines.push(fold('UID:' + (tpl.id || 'custom') + '-' + slug + '-' + i + '@smoker-dynamics'));
       lines.push('DTSTAMP:' + stamp);
       lines.push('DTSTART:' + fmtFloating(e.start));
       lines.push('DTEND:' + fmtFloating(e.end));
@@ -108,11 +116,12 @@
     return lines.join('\r\n') + '\r\n';
   }
 
-  function buildText(serveAt, templateId) {
-    var tpl = resolveTemplate(templateId);
-    var events = buildEvents(serveAt, templateId);
+  function buildText(serveAt, source) {
+    var tpl = resolveSource(source);
+    var events = buildEvents(serveAt, source);
     var lines = [
-      tpl.icon + ' ' + tpl.name + ' · ' + tpl.name_zh,
+      (tpl.icon || '🔥') + ' ' + (tpl.name || 'BBQ Cook')
+        + (tpl.name_zh ? ' · ' + tpl.name_zh : ''),
       'Serving ' + fmtClock(serveAt) + ' · ' + fmtDay(serveAt),
       ''
     ];
