@@ -192,15 +192,30 @@ window.SmokerSim.simulator = (function () {
   }
 
   /**
-   * Wood chunks contribute a short pyrolysis pulse; sum active ones for smoke density 0–1.
+   * Sawdust-in-maze smoke density 0–1. Each load smoulders for ~6 h
+   * with a slow ramp-in (5 min to peak), a long sustained plateau,
+   * and a gentle taper as fuel runs out. Multiple loads stack so the
+   * cook can be re-fueled (open the smoker briefly, drop in another
+   * pellet load, light, close).
    */
   function densityFromWood(woodAdds, tSimMin) {
     var density = 0;
-    var TAU_PYRO = 15; // minutes
+    var BURN_MIN = 360;        // 6 h smoulder per load
+    var RAMP = 5;              // minutes to reach peak after lighting
+    var PLATEAU_PEAK = 0.40;   // sustained density per unit mass — well below pyrolysis pulse
     for (var i = 0; i < woodAdds.length; i++) {
-      var x = (tSimMin - woodAdds[i].tAddMin) / TAU_PYRO;
-      if (x < 0 || x > 2) continue;
-      density += Math.exp(-Math.pow(x - 0.5, 2) / 0.5) * (woodAdds[i].mass || 1);
+      var add = woodAdds[i];
+      var elapsed = tSimMin - add.tAddMin;
+      if (elapsed < 0 || elapsed > BURN_MIN) continue;
+      var profile;
+      if (elapsed < RAMP) {
+        profile = elapsed / RAMP;                                       // ramp up
+      } else if (elapsed > BURN_MIN - 30) {
+        profile = Math.max(0, (BURN_MIN - elapsed) / 30);               // taper
+      } else {
+        profile = 1.0;                                                  // sustained
+      }
+      density += profile * PLATEAU_PEAK * (add.mass || 1);
     }
     return Math.min(density, 1);
   }
@@ -229,6 +244,14 @@ window.SmokerSim.simulator = (function () {
     FM.refuel(state.coals, n, state.tSimMin, C.COAL_P_PEAK, C.COAL_TAU_BURN_MIN);
     state.eventLog.push({ t: state.tSimMin, kind: 'refuel', n: n });
   }
+  /**
+   * Sawdust pellet load in a smoking maze (a.k.a. "AMAZN tube" — a
+   * perforated metal labyrinth filled with pelletized sawdust). Lit
+   * once and smoulders cold for hours. Physics:
+   *   - much longer smoke duration (~6 h vs ~15 min for a chunk)
+   *   - lower peak smoke density — slow smoulder, not pyrolysis pulse
+   *   - negligible heat contribution (we already ignore Q_wood here)
+   */
   function addWood(state, massKg, species) {
     state.woodAdds.push({ tAddMin: state.tSimMin, mass: massKg, species: species || 'oak' });
     state.eventLog.push({ t: state.tSimMin, kind: 'wood', mass: massKg, species: species });

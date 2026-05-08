@@ -64,7 +64,11 @@
       <div class="transport">
         <span class="ladder" title="Periodic refuel: every A minutes add B coals from the cursor onward">
           <span class="ladder-lbl">Ladder · 加炭节奏</span>
-          <span class="ladder-row">every
+          <span class="ladder-row">from
+            <input id="in-ladder-start" type="number" min="0" max="1440" step="15" value="0" title="Start (min from cook t=0)">
+            to
+            <input id="in-ladder-end"   type="number" min="0" max="1440" step="15" value="720" title="End (min from cook t=0)">
+            every
             <input id="in-ladder-period" type="number" min="10" max="180" step="5" value="45">
             min&nbsp;+
             <input id="in-ladder-count"  type="number" min="1"  max="12" step="1" value="4">
