@@ -1,127 +1,142 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smoker Dynamics — your digital pitmaster</title>
-<meta name="description" content="Decision-support simulator for low-and-slow BBQ. Predicts the stall, recommends when to wrap, tells you when to pull.">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Smoker Dynamics · 烟熏动力学</title>
+<meta name="theme-color" content="#0E1014">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/styles.css?v=4">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,800&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css?v=5">
 </head>
 <body>
 
-<header class="header">
-  <div class="header-inner">
-    <div class="header-brand">
-      <div class="brand-text">
-        <span class="brand-name">Smoker Dynamics<span class="zh">· 烟熏动力学</span></span>
-        <span class="brand-sub">Your digital pitmaster · 你的数字烤肉师傅</span>
-      </div>
-    </div>
-    <div class="header-controls">
-      <button class="theme-btn" id="btn-theme" title="Toggle dark mode · 切换深色"><span id="theme-icon">🌙</span></button>
-    </div>
+<header class="topbar">
+  <span class="brand">Smoker <em>Dynamics</em></span>
+  <div class="topbar-controls">
+    <button id="lang-toggle" class="ghost-btn" title="语言">EN</button>
+    <button id="btn-theme" class="ghost-btn" title="Theme"><span id="theme-icon">☾</span></button>
   </div>
 </header>
 
-<main class="timeline-app">
-  <section class="pit-workbench" aria-label="BBQ simulation timeline">
-    <div class="workbench-toolbar">
-      <div class="cook-meta">
-        <select id="in-preset" aria-label="Cook preset">
-          <option value="texas">Texas brisket</option>
-        </select>
-        <label class="inline-input" title="Wall-clock start of cook">
-          <span>Start</span>
-          <input id="in-start-time" type="time" value="05:30">
-        </label>
-        <label class="inline-input" title="Ambient air temperature">
-          <span>Air</span>
-          <input id="in-ambient" type="number" min="20" max="110" step="1" value="70" inputmode="numeric">
-          <em>°F</em>
-        </label>
-        <label class="inline-input" title="Initial pit temperature (often = ambient unless preheated)">
-          <span>Pit₀</span>
-          <input id="in-pit-init" type="number" min="20" max="300" step="1" value="70" inputmode="numeric">
-          <em>°F</em>
-        </label>
-        <label class="inline-input" title="Initial meat temperature (cold-from-fridge ~40, room-temp ~65)">
-          <span>Meat₀</span>
-          <input id="in-meat-init" type="number" min="20" max="120" step="1" value="40" inputmode="numeric">
-          <em>°F</em>
-        </label>
-        <label class="inline-input" title="Brisket weight">
-          <span>Brisket</span>
-          <input id="in-weight" type="number" min="2" max="20" step="0.5" value="12" inputmode="decimal">
-          <em>lb</em>
-        </label>
-        <strong id="metric-clock">0:00</strong>
-        <span id="metric-phase">Cursor</span>
-      </div>
-      <div class="transport">
-        <span class="ladder" title="Periodic refuel: every A minutes add B coals from the cursor onward">
-          <span class="ladder-lbl">Ladder · 加炭节奏</span>
-          <span class="ladder-row">from
-            <input id="in-ladder-start" type="number" min="0" max="1440" step="15" value="0" title="Start (min from cook t=0)">
-            to
-            <input id="in-ladder-end"   type="number" min="0" max="1440" step="15" value="720" title="End (min from cook t=0)">
-            every
-            <input id="in-ladder-period" type="number" min="10" max="180" step="5" value="45">
-            min&nbsp;+
-            <input id="in-ladder-count"  type="number" min="1"  max="12" step="1" value="4">
-            coal
-            <button id="btn-ladder" type="button" class="ladder-btn">Apply</button>
-          </span>
-        </span>
-        <select id="in-horizon" aria-label="Cook horizon" title="Total cook duration">
-          <option value="360">6 h</option>
-          <option value="720" selected>12 h</option>
-          <option value="1080">18 h</option>
-          <option value="1440">24 h</option>
-        </select>
-        <button id="btn-reset" class="tool-btn" type="button" title="Reset to preset defaults">↺ Reset</button>
-      </div>
+<main class="dashboard">
+
+  <!-- Phase pill + clock (hidden legacy IDs preserved for app.js) -->
+  <div class="phase-bar">
+    <span id="phase-pill" class="phase-pill phase-startup">⚫ 待引火</span>
+    <span class="phase-meta"><span id="metric-clock">5:30</span> · <span id="metric-phase">cursor</span></span>
+  </div>
+
+  <!-- HERO 3 metrics: Pit / Meat / ETA -->
+  <section class="hero">
+    <div class="hero-cell hero-pit">
+      <div class="hero-label">PIT · 炉温</div>
+      <div class="hero-value"><span id="metric-pit">70</span><span class="unit">°F</span></div>
+      <div class="hero-sub">damper <span id="metric-damper">70%</span></div>
     </div>
-
-    <aside class="radar-panel" aria-label="Final product score">
-      <div class="radar-head">
-        <span>Final Score</span>
-        <strong id="score-overall">--</strong>
-      </div>
-      <canvas id="chart-score"></canvas>
-    </aside>
-
-    <div class="timeline-stage">
-      <div class="readout-strip" aria-live="polite">
-        <span><b id="metric-pit">230°F</b> Pit</span>
-        <span><b id="metric-meat">40°F</b> Meat</span>
-        <span><b id="metric-damper">70%</b> Damper</span>
-        <span><b id="metric-wrap">Bare</b> Wrap</span>
-      </div>
-      <div class="physics-strip" aria-live="polite" title="Live integrals — collagen conversion, water retention, stall probability, fire power">
-        <span><b id="metric-collagen">0%</b> Collagen <i>胶原</i></span>
-        <span><b id="metric-water">100%</b> Water <i>水分</i></span>
-        <span><b id="metric-stall">0%</b> Stall&nbsp;P <i>停滞</i></span>
-        <span><b id="metric-fire">0&nbsp;W</b> Q_fire <i>炭火</i></span>
-      </div>
-      <div class="timeline-canvas">
-        <canvas id="chart-timeline"></canvas>
-      </div>
-      <div class="event-lanes" id="event-lanes" aria-label="Cook event timeline"></div>
+    <div class="hero-cell hero-meat">
+      <div class="hero-label">MEAT · 中心</div>
+      <div class="hero-value"><span id="metric-meat">40</span><span class="unit">°F</span></div>
+      <div class="hero-sub">wrap <span id="metric-wrap">bare</span></div>
     </div>
-
-    <div class="event-dock" id="event-dock" aria-label="Add event"></div>
+    <div class="hero-cell hero-eta">
+      <div class="hero-label">ETA · 估计完成</div>
+      <div class="hero-value"><span id="metric-eta">--</span></div>
+      <div class="hero-sub"><span id="metric-eta-range">± 0 min</span></div>
+    </div>
   </section>
+
+  <!-- AI Pitmaster card -->
+  <section class="ai-card" id="ai-card">
+    <div class="ai-head">
+      <span>🔥 PITMASTER · 烤肉师傅</span>
+      <span class="ai-confidence" id="ai-confidence">初始状态</span>
+    </div>
+    <p class="ai-verdict" id="ai-verdict">还没引火。点 +8 Preheat 启动炉子。</p>
+    <p class="ai-why" id="ai-why">8 块备长炭在桶式炉里峰值约 240°F。等它到稳态再上肉。</p>
+  </section>
+
+  <!-- TIMELINE chart + lanes -->
+  <section class="chart-card">
+    <div class="chart-head">
+      <span>TIMELINE · 时间轴</span>
+      <select id="in-horizon">
+        <option value="360">6 h</option>
+        <option value="720" selected>12 h</option>
+        <option value="1080">18 h</option>
+        <option value="1440">24 h</option>
+      </select>
+    </div>
+    <div class="chart-canvas-wrap">
+      <canvas id="chart-timeline"></canvas>
+    </div>
+    <div class="event-lanes" id="event-lanes"></div>
+  </section>
+
+  <!-- PRIMARY DOCK — 4 most-used actions, big buttons -->
+  <section class="dock-primary">
+    <button class="dock-btn dock-fire"     data-event="refuel-4">🔥 +4 炭</button>
+    <button class="dock-btn dock-fire"     data-event="refuel-8">🔥 +8 预热</button>
+    <button class="dock-btn dock-wrap"     data-event="paper">📦 届夫纸</button>
+    <button class="dock-btn dock-handling" data-event="pull">✓ 出炉</button>
+  </section>
+
+  <!-- SECONDARY DOCK — collapsed -->
+  <details class="pro-section" id="more-actions">
+    <summary><span>更多操作 · More actions</span></summary>
+    <div class="dock-secondary" id="event-dock"></div>
+    <div class="ladder-row">
+      <span class="ladder-tag">加炭节奏 · LADDER</span>
+      from
+      <input id="in-ladder-start" type="number" min="0" max="1440" step="15" value="0">
+      to
+      <input id="in-ladder-end" type="number" min="0" max="1440" step="15" value="720"> min
+      every
+      <input id="in-ladder-period" type="number" min="10" max="180" step="5" value="45"> min
+      +
+      <input id="in-ladder-count" type="number" min="1" max="12" step="1" value="4"> coal
+      <button id="btn-ladder" class="primary-btn">应用</button>
+    </div>
+  </details>
+
+  <!-- PHYSICS DIAGNOSTICS — collapsed -->
+  <details class="pro-section">
+    <summary><span>物理诊断 · Physics</span></summary>
+    <div class="diag-grid">
+      <div class="diag-cell"><span class="diag-num" id="metric-collagen">0</span><span class="diag-unit">%</span><span class="diag-label">胶原</span></div>
+      <div class="diag-cell"><span class="diag-num" id="metric-water">100</span><span class="diag-unit">%</span><span class="diag-label">水分</span></div>
+      <div class="diag-cell"><span class="diag-num" id="metric-stall">0</span><span class="diag-unit">%</span><span class="diag-label">Stall</span></div>
+      <div class="diag-cell"><span class="diag-num" id="metric-fire">0</span><span class="diag-unit">W</span><span class="diag-label">火力</span></div>
+    </div>
+    <div class="radar-wrap"><canvas id="chart-score"></canvas></div>
+    <div class="score-line">综合 <strong id="score-overall">--</strong> / 100</div>
+  </details>
+
+  <!-- SETUP — collapsed -->
+  <details class="pro-section">
+    <summary><span>烧烤设置 · Setup</span></summary>
+    <div class="setup-grid">
+      <label class="num-cell"><span>预设</span>
+        <select id="in-preset"><option value="texas">Texas brisket</option></select>
+      </label>
+      <label class="num-cell"><span>开始时间</span><input id="in-start-time" type="time" value="05:30"></label>
+      <label class="num-cell"><span>气温 °F</span><input id="in-ambient" type="number" min="20" max="110" step="1" value="70"></label>
+      <label class="num-cell"><span>炉初始 °F</span><input id="in-pit-init" type="number" min="20" max="300" step="1" value="70"></label>
+      <label class="num-cell"><span>肉初始 °F</span><input id="in-meat-init" type="number" min="20" max="120" step="1" value="40"></label>
+      <label class="num-cell"><span>重量 lb</span><input id="in-weight" type="number" min="2" max="20" step="0.5" value="12"></label>
+      <button id="btn-reset" class="ghost-btn reset-btn">↺ Reset</button>
+    </div>
+  </details>
+
 </main>
 
-<!-- Libraries -->
+<!-- libraries -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.1.0/dist/chartjs-plugin-annotation.min.js"></script>
 
-<!-- Smoker physics + logic modules -->
+<!-- physics + logic -->
 <script src="js/constants.js"></script>
 <script src="js/heatDiffusion.js"></script>
 <script src="js/stallModel.js"></script>
@@ -139,7 +154,7 @@
 <script src="js/notify.js?v=1"></script>
 
 <!-- UI controller -->
-<script src="js/app.js?v=19"></script>
+<script src="js/app.js?v=20"></script>
 
 </body>
 </html>
