@@ -88,12 +88,21 @@ window.SmokerSim.heatDiffusion = (function () {
   function evapFluxKgPerM2S(tSurfC, tAmbC, w, wrapReduction, humidityFactor) {
     if (tSurfC < C.STALL_TEMP_LOW_C) return 0;
     if (w <= 0) return 0;
-    // Calibrated 2026-04 against the user's real "wrap saves 1–2 h" feedback.
-    // 6e-4 deepens the stall plateau enough that wrap interventions shave
-    // ~60–90 min vs ~15 min at the previous 4e-4.
+    // Calibrated 2026-04 against "wrap saves 1–2 h" feedback.
     var maxFlux = 5.0e-4;                           // peak rate at reference conditions
     var driving = Math.max(0, tSurfC - tAmbC) / 60; // 1.0 at 60 °C delta
-    return maxFlux * (1 - wrapReduction) * w * driving * humidityFactor;
+    // Stall-band amplifier (PHYSICS.md §6). Wet-bulb evaporation peaks
+    // hard in the 65–77 °C surface range where the latent-heat sink can
+    // briefly equal the convective heat input — this is what produces
+    // the visible meat-temp plateau and accelerated water loss.
+    // Outside that band, evap is governed by the plain driving term.
+    var stallAmp = 1.0;
+    if (tSurfC >= 65 && tSurfC <= 77) {
+      // Triangular peak centred at 71 °C (the classic stall plateau)
+      var dist = Math.abs(tSurfC - 71) / 6;        // 0 at peak, 1 at edges
+      stallAmp = 1.0 + 1.2 * (1 - dist);            // up to 2.2× at the centre
+    }
+    return maxFlux * (1 - wrapReduction) * w * driving * humidityFactor * stallAmp;
   }
 
   /**
