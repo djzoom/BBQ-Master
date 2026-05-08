@@ -63,8 +63,8 @@ window.SmokerSim.simulator = (function () {
       spritzEndMin:  0,
       spritzCount:   0,
 
-      // Pit
-      tPitC:         C.fToC(230),              // idle pre-meat; user raises via damper/fuel
+      // Pit starts at ambient — heat only enters via ignite/refuel events.
+      tPitC:         C.fToC(inputs.tAmbF != null ? inputs.tAmbF : 70),
       coals:         [],
       damperPct:     60,
       woodAdds:      [],

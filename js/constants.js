@@ -69,7 +69,11 @@ window.SmokerSim.constants = (function () {
   // Calibrated 2026-04 against five-experiment study so 8 active coals at
   // damper 70 % land at ~250 °F (with UA_PIT = 5.5 W/K), and 12 fresh coals
   // at peak overshoot to ~340 °F — matching the user's real overshoot event.
-  var COAL_P_PEAK   = 130;               // W per briquette at curve peak
+  var COAL_P_PEAK   = 220;               // W per binchotan piece at curve peak.
+                                         // Calibrated so 4 red-hot pieces hold pit
+                                         // at ~300 °F with default UA (5.5 W/K) and
+                                         // damper 70 %. (Briquettes were 130 W; binchotan
+                                         // burns hotter and longer.)
   var COAL_TAU_BURN_MIN = 90;            // min
 
   // §3 — Rest-phase juice rebound

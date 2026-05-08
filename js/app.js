@@ -48,6 +48,10 @@
     events: [],                 // planning list — sole source of truth
     cursorMin: 0,               // where dock buttons place new events
     horizonMin: 720,            // total cook timeline (selectable: 6/12/18/24h)
+    overrides: {                // user-editable inputs that override preset.inputs
+      tAmbF: 70,
+      weightLb: 12
+    },
     samples: [],
     timelineChart: null,
     scoreChart: null,
@@ -95,7 +99,11 @@
   // Returns the final state. Updates view.sim and view.samples.
   function replayCook() {
     if (!view.preset) return null;
-    var inputs = view.preset.inputs;
+    // Layer user overrides (ambient air, weight) on top of preset inputs.
+    var inputs = Object.assign({}, view.preset.inputs, {
+      tAmbF: view.overrides.tAmbF,
+      weightLb: view.overrides.weightLb
+    });
     var fresh = Sim.create(inputs);
     fresh.damperPct = view.preset.policy.damperPct;
     view.sim = fresh;
@@ -182,9 +190,9 @@
   function applyEvent(id) {
     var t = view.cursorMin;
     switch (id) {
-      case 'ignite':       view.events.push({ t: t, kind: 'ignite', n: 12 }); break;
-      case 'refuel-1':     view.events.push({ t: t, kind: 'refuel', n: 1 }); break;
-      case 'refuel-4':     view.events.push({ t: t, kind: 'refuel', n: 4 }); break;
+      case 'ignite':       addCoalEvent(t, 'ignite', 12); break;
+      case 'refuel-1':     addCoalEvent(t, 'refuel', 1); break;
+      case 'refuel-4':     addCoalEvent(t, 'refuel', 4); break;
       case 'coal-minus':
         if (!peelOneCoalAt(t)) { toast('No coals to remove at cursor'); return; }
         break;
@@ -205,6 +213,21 @@
         break;
     }
     rerender(false);
+  }
+
+  // Add coals at time t. If an existing ignite/refuel sits within 1 min of
+  // t, merge into it instead of pushing a new chip — keeps the lane tidy
+  // when the user clicks +1 a few times in a row at the same cursor.
+  function addCoalEvent(t, kind, n) {
+    for (var i = 0; i < view.events.length; i++) {
+      var e = view.events[i];
+      if ((e.kind === 'refuel' || (kind === 'refuel' && e.kind === 'ignite' && e.t > 0))
+          && Math.abs(e.t - t) < 1.0) {
+        e.n += n;
+        return;
+      }
+    }
+    view.events.push({ t: t, kind: kind, n: n });
   }
 
   // Remove one coal from the most recent ignite/refuel that's still in the
@@ -614,8 +637,40 @@
     });
   }
 
+  function bindOverrideInputs() {
+    var amb = $('in-ambient');
+    var wt  = $('in-weight');
+    if (amb) {
+      amb.value = view.overrides.tAmbF;
+      amb.addEventListener('change', function () {
+        var v = parseFloat(amb.value);
+        if (isFinite(v)) {
+          view.overrides.tAmbF = clamp(v, 20, 110);
+          amb.value = view.overrides.tAmbF;
+          rerender(true);
+        }
+      });
+    }
+    if (wt) {
+      wt.value = view.overrides.weightLb;
+      wt.addEventListener('change', function () {
+        var v = parseFloat(wt.value);
+        if (isFinite(v)) {
+          view.overrides.weightLb = clamp(v, 2, 20);
+          wt.value = view.overrides.weightLb;
+          rerender(true);
+        }
+      });
+    }
+  }
+
   function resetToPresetDefaults() {
     view.preset = Presets.get(view.presetId);
+    // Seed the override inputs from preset if user hasn't customised
+    view.overrides.weightLb = view.preset.inputs.weightLb;
+    view.overrides.tAmbF    = view.preset.inputs.tAmbF;
+    var amb = $('in-ambient'); if (amb) amb.value = view.overrides.tAmbF;
+    var wt  = $('in-weight');  if (wt)  wt.value  = view.overrides.weightLb;
     view.events = defaultEventsForPreset(view.preset);
     view.cursorMin = 0;
     rerender(true);
@@ -659,6 +714,7 @@
     initTheme();
     populatePresetSelect();
     populateHorizonSelect();
+    bindOverrideInputs();
     renderEventDock();
     bindControls();
     view.timelineChart = makeTimelineChart();

@@ -1397,6 +1397,43 @@ body {
   padding: 0 30px 0 10px;
 }
 
+/* Ambient + weight inputs in the toolbar */
+.inline-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--tool-bg);
+  color: var(--text-muted);
+  font: 600 11px var(--font);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.inline-input span { color: var(--text-muted); }
+.inline-input input {
+  width: 48px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  font: 700 14px var(--mono);
+  color: var(--text);
+  text-align: right;
+  padding: 0 2px;
+  outline: none;
+}
+.inline-input input:focus {
+  background: rgba(229, 72, 61, 0.08);
+}
+.inline-input em {
+  font-style: normal;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 #metric-clock {
   min-width: 74px;
   font: 700 24px var(--mono);
