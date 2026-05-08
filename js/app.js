@@ -1,7 +1,17 @@
 /**
- * Smoker Dynamics — timeline-first UI controller.
- * The physics modules remain untouched; this file only maps events to a
- * single temperature timeline and a live final-score radar.
+ * Smoker Dynamics — plan-mode timeline workbench.
+ *
+ * Source of truth: view.events — a sorted list of planned events.
+ * Anything that mutates events (dock click / drag / chip removal /
+ * preset reset / horizon change) calls replayCook(), which:
+ *   1. Creates a fresh sim state from preset.inputs
+ *   2. Replays events in time order, stepping the physics each minute
+ *   3. Returns samples + final state, which the UI renders
+ *
+ * There is no Run/Pause anymore — the chart shows the FULL predicted
+ * cook from t=0 to horizon as soon as inputs change. Drag a chip to
+ * reschedule; click a chip to remove; click an empty lane to set the
+ * cursor where new dock-button events are dropped.
  */
 (function () {
   'use strict';
@@ -34,192 +44,211 @@
   var view = {
     presetId: 'texas',
     preset: null,
-    sim: null,
-    running: false,
-    loopTimer: null,
-    lastWallMs: 0,
-    speed: 7200,
+    sim: null,                  // final replay state (read-only for UI)
+    events: [],                 // planning list — sole source of truth
+    cursorMin: 0,               // where dock buttons place new events
+    horizonMin: 720,            // total cook timeline (selectable: 6/12/18/24h)
     samples: [],
     timelineChart: null,
-    scoreChart: null
+    scoreChart: null,
+    replayPending: false        // RAF coalescing flag for drag
   };
 
-  function $(id) {
-    return document.getElementById(id);
-  }
-
+  // ───────────── Helpers ─────────────
+  function $(id) { return document.getElementById(id); }
   function css(name, fallback) {
-    var value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    return value || fallback;
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
   }
-
-  function clamp(n, min, max) {
-    return Math.max(min, Math.min(max, n));
-  }
-
+  function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
   function formatClock(min) {
-    var total = Math.max(0, Math.round(min));
-    var h = Math.floor(total / 60);
-    var m = total % 60;
-    return h + ':' + String(m).padStart(2, '0');
+    if (min < 0) min = 0;
+    var h = Math.floor(min / 60);
+    var m = Math.round(min % 60);
+    return h + ':' + (m < 10 ? '0' + m : m);
+  }
+  function formatF(c) { return Math.round(C.cToF(c)) + 'F'; }
+
+  // ───────────── Default events from preset ─────────────
+  function defaultEventsForPreset(p) {
+    var ev = [];
+    // Light at t=0
+    ev.push({ t: 0, kind: 'ignite', n: p.policy.igniteN || 12 });
+    // Wood chunks from policy
+    if (p.policy.woodChunks) {
+      p.policy.woodChunks.forEach(function (w) {
+        ev.push({ t: w.tMin, kind: 'wood', mass: 0.15, species: w.species });
+      });
+    }
+    // Two refuel events at sensible defaults
+    ev.push({ t: 60,  kind: 'refuel', n: 4 });
+    ev.push({ t: 150, kind: 'refuel', n: 4 });
+    // Wrap (paper by default for low-and-slow) around 4h
+    if (p.policy.wrapType && p.policy.wrapType !== 'none') {
+      ev.push({ t: 240, kind: 'wrap', type: p.policy.wrapType });
+    }
+    return ev;
   }
 
-  function formatF(c) {
-    return Math.round(C.cToF(c)) + 'F';
-  }
-
-  function horizonMin() {
-    if (!view.sim) return 360;
-    return Math.max(360, Math.ceil((view.sim.tSimMin + 60) / 60) * 60);
-  }
-
-  function resetCook() {
-    stop();
-    view.preset = Presets.get(view.presetId);
-    view.sim = Sim.create(view.preset.inputs);
-    view.sim.damperPct = view.preset.policy.damperPct;
+  // ───────────── Replay engine ─────────────
+  // Builds a fresh sim from preset inputs and replays view.events.
+  // Returns the final state. Updates view.sim and view.samples.
+  function replayCook() {
+    if (!view.preset) return null;
+    var inputs = view.preset.inputs;
+    var fresh = Sim.create(inputs);
+    fresh.damperPct = view.preset.policy.damperPct;
+    view.sim = fresh;
     view.samples = [];
-    Sim.ignite(view.sim, view.preset.policy.igniteN || 10);
+
+    // Sort events by time so replay is deterministic
+    view.events.sort(function (a, b) { return a.t - b.t; });
+
+    // Snapshot before any event fires
     pushSample(true);
-    syncCharts(true);
-    updateUI();
+
+    var evIdx = 0;
+    var sorted = view.events;
+    var horizon = view.horizonMin;
+
+    while (fresh.tSimMin < horizon && fresh.phase !== 'slice') {
+      // Apply any events whose time falls in this minute
+      while (evIdx < sorted.length && sorted[evIdx].t <= fresh.tSimMin + 0.5) {
+        applyEventToSim(fresh, sorted[evIdx]);
+        evIdx++;
+      }
+      Sim.step(fresh, 60);
+      pushSample(false);
+    }
+    // After replay, the sim's eventLog contains duplicated entries from
+    // Sim.* calls. Replace with our planning list so chip rendering stays in sync.
+    fresh.eventLog = view.events.slice();
+    return fresh;
   }
 
+  // Push (pit, meat) sample for the current sim time. Called by replay loop.
   function pushSample(force) {
     if (!view.sim) return;
     var last = view.samples[view.samples.length - 1];
-    if (!force && last && view.sim.tSimMin - last.x < 2) return;
+    if (!force && last && view.sim.tSimMin - last.x < 1) return;
     var n = view.sim.T.length - 1;
     view.samples.push({
       x: view.sim.tSimMin,
       pit: C.cToF(view.sim.tPitC),
       meat: C.cToF(view.sim.T[n])
     });
-    if (view.samples.length > 1600) view.samples.shift();
   }
 
-  function advanceSeconds(totalSec) {
-    var remaining = Math.max(0, totalSec);
-    while (remaining > 0 && view.sim.tSimMin < 24 * 60) {
-      var stepSec = Math.min(remaining, 60);
-      Sim.step(view.sim, stepSec);
-      remaining -= stepSec;
-      pushSample(false);
+  // Replay an event into a sim state. Used internally by replayCook().
+  function applyEventToSim(state, e) {
+    switch (e.kind) {
+      case 'ignite':  Sim.ignite(state, e.n || 12); break;
+      case 'refuel':  Sim.refuel(state, e.n || 4); break;
+      case 'wood':    Sim.addWood(state, e.mass || 0.15, e.species || 'post_oak'); break;
+      case 'wrap':    Sim.wrap(state, e.type || 'butcher_paper'); break;
+      case 'spritz':  Sim.spritz(state, e.volume || 30); break;
+      case 'lid':     Sim.openLid(state, e.seconds || 30); break;
+      case 'damper':  Sim.damper(state, e.pct); break;
+      case 'pull':    Sim.pull(state); break;
+      case 'slice':   Sim.slice(state, view.preset.policy.restMethod); break;
     }
   }
 
-  function start() {
-    if (view.running) {
-      stop();
-      return;
-    }
-    view.running = true;
-    view.lastWallMs = performance.now();
-    $('btn-play').textContent = 'Pause';
-    view.loopTimer = window.setInterval(tick, 250);
+  // ───────────── Public mutations (all funnel through replay) ─────────────
+  function rerender(reset) {
+    replayCook();
+    syncCharts(reset === true);
+    updateUI();
   }
 
-  function stop() {
-    view.running = false;
-    if (view.loopTimer) window.clearInterval(view.loopTimer);
-    view.loopTimer = null;
-    if ($('btn-play')) $('btn-play').textContent = 'Run';
+  // RAF-coalesced replay for live drag
+  function rerenderThrottled() {
+    if (view.replayPending) return;
+    view.replayPending = true;
+    requestAnimationFrame(function () {
+      view.replayPending = false;
+      replayCook();
+      syncCharts(false);
+      updateUI();
+    });
   }
 
-  function tick() {
-    if (!view.running) return;
-    var now = performance.now();
-    if (!view.lastWallMs) view.lastWallMs = now;
-    var dWall = (now - view.lastWallMs) / 1000;
-    view.lastWallMs = now;
-    advanceSeconds(Math.min(dWall * view.speed, 1200));
+  function setCursor(t) {
+    view.cursorMin = clamp(t, 0, view.horizonMin);
     syncCharts(false);
     updateUI();
-    if (view.sim.phase === 'slice' || view.sim.tSimMin >= 24 * 60) {
-      stop();
-      return;
-    }
   }
 
   function applyEvent(id) {
-    var s = view.sim;
-    if (!s) return;
+    var t = view.cursorMin;
     switch (id) {
-      case 'ignite':
-        Sim.ignite(s, 12);
-        break;
-      case 'refuel':       // legacy alias
-      case 'refuel-4':
-        Sim.refuel(s, 4);
-        break;
-      case 'refuel-1':
-        Sim.refuel(s, 1);
-        break;
+      case 'ignite':       view.events.push({ t: t, kind: 'ignite', n: 12 }); break;
+      case 'refuel-1':     view.events.push({ t: t, kind: 'refuel', n: 1 }); break;
+      case 'refuel-4':     view.events.push({ t: t, kind: 'refuel', n: 4 }); break;
       case 'coal-minus':
-        var removed = Sim.removeCoals(s, 1);
-        if (removed === 0) toast('No coals to remove');
+        if (!peelOneCoalAt(t)) { toast('No coals to remove at cursor'); return; }
         break;
-      case 'wood':
-        Sim.addWood(s, 0.15, 'post_oak');
-        break;
-      case 'paper':
-        Sim.wrap(s, 'butcher_paper');
-        break;
-      case 'foil':
-        Sim.wrap(s, 'aluminum_foil');
-        break;
-      case 'bare':
-        Sim.wrap(s, 'none');
-        break;
-      case 'spritz':
-        Sim.spritz(s, 30);
-        break;
-      case 'lid':
-        Sim.openLid(s, 30);
-        break;
-      case 'damper-up':
-        Sim.damper(s, s.damperPct + 10);
-        break;
-      case 'damper-down':
-        Sim.damper(s, s.damperPct - 10);
-        break;
-      case 'pull':
-        Sim.pull(s);
-        break;
-      case 'slice':
-        if (s.phase !== 'rest') Sim.pull(s);
-        Sim.slice(s, view.preset.policy.restMethod);
-        break;
+      case 'wood':         view.events.push({ t: t, kind: 'wood', mass: 0.15, species: 'post_oak' }); break;
+      case 'paper':        view.events.push({ t: t, kind: 'wrap', type: 'butcher_paper' }); break;
+      case 'foil':         view.events.push({ t: t, kind: 'wrap', type: 'aluminum_foil' }); break;
+      case 'bare':         view.events.push({ t: t, kind: 'wrap', type: 'none' }); break;
+      case 'spritz':       view.events.push({ t: t, kind: 'spritz', volume: 30 }); break;
+      case 'lid':          view.events.push({ t: t, kind: 'lid', seconds: 30 }); break;
+      case 'damper-up':    view.events.push({ t: t, kind: 'damper', pct: lastDamperBefore(t) + 10 }); break;
+      case 'damper-down':  view.events.push({ t: t, kind: 'damper', pct: lastDamperBefore(t) - 10 }); break;
+      case 'pull':         view.events.push({ t: t, kind: 'pull' }); break;
+      case 'slice':        view.events.push({ t: t, kind: 'slice' }); break;
       case 'undo':
-        if (!s.eventLog.length) { toast('Nothing to undo'); break; }
-        var last = s.eventLog[s.eventLog.length - 1];
-        Sim.removeEvent(s, s.eventLog.length - 1);
-        toast('Undid ' + (last.kind === 'refuel' ? '+' + (last.n || 1) + ' coal'
-            : last.kind === 'ignite' ? 'ignite ' + last.n
-            : last.kind === 'wrap' ? 'wrap ' + last.type
-            : last.kind));
+        if (!view.events.length) { toast('Nothing to undo'); return; }
+        var last = view.events.pop();
+        toast('Undid ' + describeEvent(last) + ' @ ' + formatClock(last.t));
         break;
     }
-    pushSample(true);
-    syncCharts(false);
-    updateUI();
+    rerender(false);
+  }
+
+  // Remove one coal from the most recent ignite/refuel that's still in the
+  // future-or-present relative to the cursor (so peeling matches what the
+  // user is looking at right now).
+  function peelOneCoalAt(t) {
+    for (var i = view.events.length - 1; i >= 0; i--) {
+      var e = view.events[i];
+      if ((e.kind === 'refuel' || e.kind === 'ignite') && e.t <= t + 0.5) {
+        e.n -= 1;
+        if (e.n <= 0) view.events.splice(i, 1);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function lastDamperBefore(t) {
+    var v = view.preset.policy.damperPct || 60;
+    for (var i = 0; i < view.events.length; i++) {
+      if (view.events[i].kind === 'damper' && view.events[i].t < t) v = view.events[i].pct;
+    }
+    return v;
   }
 
   function removeEventByIndex(idx) {
-    var s = view.sim;
-    if (!s) return;
-    var e = s.eventLog[idx];
-    if (!e) return;
-    Sim.removeEvent(s, idx);
-    toast('Removed ' + e.kind + ' @ ' + formatClock(e.t));
-    pushSample(true);
-    syncCharts(false);
-    updateUI();
+    if (idx < 0 || idx >= view.events.length) return;
+    var e = view.events[idx];
+    view.events.splice(idx, 1);
+    toast('Removed ' + describeEvent(e) + ' @ ' + formatClock(e.t));
+    rerender(false);
   }
 
-  // Lightweight ephemeral toast pinned to top-right of workbench
+  function describeEvent(e) {
+    if (e.kind === 'refuel') return '+' + e.n + ' coal';
+    if (e.kind === 'ignite') return 'ignite ' + e.n;
+    if (e.kind === 'wrap')   return wrapLabelFor(e.type);
+    if (e.kind === 'damper') return 'damper ' + e.pct + '%';
+    return e.kind;
+  }
+
+  // ───────────── Toast ─────────────
   function toast(msg) {
-    var el = document.getElementById('app-toast');
+    var el = $('app-toast');
     if (!el) {
       el = document.createElement('div');
       el.id = 'app-toast';
@@ -232,9 +261,11 @@
     el._hideT = setTimeout(function () { el.classList.remove('show'); }, 1600);
   }
 
+  // ───────────── Scoring (radar) ─────────────
+  // Each dimension cites the PHYSICS.md section it reflects.
   function scoreCook() {
-    // Each dimension cites the PHYSICS.md section that drives it.
     var s = view.sim;
+    if (!s) return { labels: ['Done', 'Tender', 'Juicy', 'Bark', 'Smoke'], scores: [0,0,0,0,0], overall: 0 };
     var n = s.T.length - 1;
     var coreF = C.cToF(s.T[n]);
     var water = s.wRetained != null ? s.wRetained : s.w;
@@ -242,21 +273,12 @@
     var smokeBad = s.smoke ? s.smoke.bad : 0;
     var wrapped = s.wrapState && s.wrapState !== 'none';
 
-    // §4 collagen — direct: full credit at C ≥ 0.85 (probe-tender), capped 100
-    var tender = clamp(((s.C || 0) / 0.85) * 100, 0, 100);
-
-    // §3 water budget + rest rebound — direct on retained water
-    var juicy = clamp(water * 100, 0, 100);
-
-    // §8.7 doneness — distance from 203°F probe-tender target
-    var doneness = clamp(100 - Math.abs(coreF - 203) * 2.5, 0, 100);
-
-    // §5 smoke uptake (good vs creosote) — net flavour
-    var smoke = clamp(15 + smokeGood * 60 - smokeBad * 35, 0, 100);
-
-    // §3 + bark formation — surface drying time + smoke condensation
+    var tender   = clamp(((s.C || 0) / 0.85) * 100, 0, 100);          // §4
+    var juicy    = clamp(water * 100, 0, 100);                         // §3
+    var doneness = clamp(100 - Math.abs(coreF - 203) * 2.5, 0, 100);   // §8.7
+    var smoke    = clamp(15 + smokeGood * 60 - smokeBad * 35, 0, 100); // §5
     var barkTime = Math.min(s.tSimMin / 240, 1);
-    var bark = clamp(18 + barkTime * 42 + smokeGood * 18 - (wrapped ? 10 : 0), 0, 100);
+    var bark     = clamp(18 + barkTime * 42 + smokeGood * 18 - (wrapped ? 10 : 0), 0, 100);
 
     var scores = [doneness, tender, juicy, bark, smoke];
     var overall = scores.reduce(function (sum, v) { return sum + v; }, 0) / scores.length;
@@ -267,31 +289,15 @@
     };
   }
 
-  function recentSlopeFperMin() {
-    // °F/min over last ~5 sim minutes from the sample buffer.
-    var s = view.samples;
-    if (s.length < 2) return 0;
-    var last = s[s.length - 1];
-    var cutoff = last.x - 5;
-    var first = last;
-    for (var i = s.length - 2; i >= 0; i--) {
-      if (s[i].x <= cutoff) { first = s[i]; break; }
-      first = s[i];
-    }
-    var dt = last.x - first.x;
-    if (dt <= 0.1) return 0;
-    return (last.meat - first.meat) / dt;
-  }
-
   function physicsReadouts() {
     var s = view.sim;
     if (!s) return { collagen: 0, water: 100, stall: 0, qFireW: 0 };
-    var qFireW = FM ? FM.qFire(s.coals, s.tSimMin, s.damperPct) : 0;
+    var qFireW = FM ? FM.qFire(s.coals, view.cursorMin, s.damperPct) : 0;
     var n = s.T.length - 1;
     var coreF = C.cToF(s.T[n]);
     var thicknessIn = s.halfThickM ? (2 * s.halfThickM / 0.0254) : 3;
     var pStall = Stall ? Stall.stallProbability(coreF, s.humidityPct || 50,
-        s.windMph || 2, thicknessIn, recentSlopeFperMin()) : 0;
+        s.windMph || 2, thicknessIn, recentSlope()) : 0;
     var w = s.wRetained != null ? s.wRetained : s.w;
     return {
       collagen: Math.round((s.C || 0) * 100),
@@ -301,34 +307,44 @@
     };
   }
 
-  function phaseLabel() {
-    if (!view.sim) return 'Ready';
-    if (view.sim.phase === 'rest') return 'Rest';
-    if (view.sim.phase === 'slice') return 'Slice';
-    if (view.sim.wrapState && view.sim.wrapState !== 'none') return 'Wrapped';
-    var n = view.sim.T.length - 1;
-    var coreF = C.cToF(view.sim.T[n]);
-    if (coreF >= 145 && coreF <= 175) return 'Stall';
-    return 'Smoke';
+  function recentSlope() {
+    var s = view.samples;
+    if (s.length < 2) return 0;
+    var last = s[s.length - 1];
+    var first = last;
+    for (var i = s.length - 2; i >= 0; i--) {
+      if (s[i].x <= last.x - 5) { first = s[i]; break; }
+      first = s[i];
+    }
+    var dt = last.x - first.x;
+    if (dt <= 0.1) return 0;
+    return (last.meat - first.meat) / dt;
   }
 
-  function wrapLabel() {
-    var wrap = view.sim.wrapState;
-    if (wrap === 'butcher_paper') return 'Paper';
-    if (wrap === 'aluminum_foil') return 'Foil';
-    if (wrap === 'foil_boat') return 'Boat';
+  function wrapLabel(s) {
+    var ws = (s && s.wrapState) || 'none';
+    if (ws === 'butcher_paper') return 'Paper';
+    if (ws === 'aluminum_foil') return 'Foil';
+    if (ws === 'foil_boat') return 'Boat';
+    return 'Bare';
+  }
+  function wrapLabelFor(type) {
+    if (type === 'butcher_paper') return 'Paper';
+    if (type === 'aluminum_foil') return 'Foil';
+    if (type === 'foil_boat') return 'Boat';
     return 'Bare';
   }
 
   function updateUI() {
     if (!view.sim) return;
-    var n = view.sim.T.length - 1;
-    $('metric-clock').textContent = formatClock(view.sim.tSimMin);
-    $('metric-phase').textContent = phaseLabel();
-    $('metric-pit').textContent = formatF(view.sim.tPitC);
-    $('metric-meat').textContent = formatF(view.sim.T[n]);
+    $('metric-clock').textContent = formatClock(view.cursorMin) + ' ⏱';
+    $('metric-phase').textContent = 'Cursor / 光标';
+    // Find pit/meat at cursor by looking up the closest sample
+    var atCursor = sampleAtTime(view.cursorMin);
+    $('metric-pit').textContent = Math.round(atCursor.pit) + 'F';
+    $('metric-meat').textContent = Math.round(atCursor.meat) + 'F';
     $('metric-damper').textContent = view.sim.damperPct + '%';
-    $('metric-wrap').textContent = wrapLabel();
+    $('metric-wrap').textContent = wrapLabel(view.sim);
     $('score-overall').textContent = scoreCook().overall;
     var p = physicsReadouts();
     if ($('metric-collagen')) $('metric-collagen').textContent = p.collagen + '%';
@@ -338,6 +354,20 @@
     renderEventLanes();
   }
 
+  function sampleAtTime(t) {
+    if (!view.samples.length) return { pit: 70, meat: 40 };
+    if (t <= view.samples[0].x) return view.samples[0];
+    for (var i = 0; i < view.samples.length - 1; i++) {
+      if (view.samples[i].x <= t && view.samples[i + 1].x >= t) {
+        var a = view.samples[i], b = view.samples[i + 1];
+        var f = (t - a.x) / (b.x - a.x || 1);
+        return { pit: a.pit + (b.pit - a.pit) * f, meat: a.meat + (b.meat - a.meat) * f };
+      }
+    }
+    return view.samples[view.samples.length - 1];
+  }
+
+  // ───────────── Charts ─────────────
   function makeTimelineChart() {
     if (!window.Chart) return null;
     var canvas = $('chart-timeline');
@@ -345,70 +375,32 @@
       type: 'line',
       data: {
         datasets: [
-          {
-            label: 'Pit',
-            data: [],
-            borderColor: css('--pit-line', '#E5483D'),
-            backgroundColor: 'rgba(229, 72, 61, 0.10)',
-            borderWidth: 3,
-            pointRadius: 0,
-            tension: 0.25
-          },
-          {
-            label: 'Meat',
-            data: [],
-            borderColor: css('--meat-line', '#0F8C8C'),
-            backgroundColor: 'rgba(15, 140, 140, 0.10)',
-            borderWidth: 3,
-            pointRadius: 0,
-            tension: 0.25,
-            fill: true
-          }
+          { label: 'Pit',  data: [], borderColor: css('--pit-line', '#E5483D'),
+            backgroundColor: 'rgba(229,72,61,0.10)', borderWidth: 3, pointRadius: 0, tension: 0.25 },
+          { label: 'Meat', data: [], borderColor: css('--meat-line', '#0F8C8C'),
+            backgroundColor: 'rgba(15,140,140,0.10)', borderWidth: 3, pointRadius: 0, tension: 0.25, fill: true }
         ]
       },
       options: {
-        animation: false,
-        parsing: false,
-        responsive: true,
-        maintainAspectRatio: false,
+        animation: false, parsing: false, responsive: true, maintainAspectRatio: false,
         interaction: { mode: 'nearest', intersect: false },
         plugins: {
-          legend: {
-            align: 'start',
-            labels: { boxWidth: 10, color: css('--text-secondary', '#475569'), font: { size: 12 } }
-          },
-          tooltip: {
-            callbacks: {
-              title: function (items) { return formatClock(items[0].parsed.x); },
-              label: function (ctx) { return ctx.dataset.label + ' ' + Math.round(ctx.parsed.y) + 'F'; }
-            }
-          },
-          annotation: {
-            // Filled in dynamically by syncCharts(): vertical flag at each event time
-            annotations: {}
-          }
+          legend: { align: 'start', labels: { boxWidth: 10, color: css('--text-secondary', '#475569'), font: { size: 12 } } },
+          tooltip: { callbacks: {
+            title: function (items) { return formatClock(items[0].parsed.x); },
+            label: function (ctx) { return ctx.dataset.label + ' ' + Math.round(ctx.parsed.y) + 'F'; }
+          } },
+          annotation: { annotations: {} }
         },
         scales: {
-          x: {
-            type: 'linear',
-            min: 0,
-            max: 360,
-            grid: { color: css('--chart-grid', 'rgba(15, 23, 42, 0.09)') },
-            ticks: {
-              color: css('--text-muted', '#94A3B8'),
-              callback: function (v) { return formatClock(v); },
-              maxTicksLimit: 9
-            }
-          },
-          y: {
-            min: 30,
-            max: 330,
-            grid: { color: css('--chart-grid', 'rgba(15, 23, 42, 0.09)') },
-            ticks: {
-              color: css('--text-muted', '#94A3B8'),
-              callback: function (v) { return v + 'F'; }
-            }
-          }
+          x: { type: 'linear', min: 0, max: 720,
+               grid: { color: css('--chart-grid', 'rgba(15,23,42,0.09)') },
+               ticks: { color: css('--text-muted', '#94A3B8'),
+                        callback: function (v) { return formatClock(v); }, maxTicksLimit: 9 } },
+          y: { min: 30, max: 330,
+               grid: { color: css('--chart-grid', 'rgba(15,23,42,0.09)') },
+               ticks: { color: css('--text-muted', '#94A3B8'),
+                        callback: function (v) { return v + 'F'; } } }
         }
       }
     });
@@ -419,37 +411,23 @@
     var canvas = $('chart-score');
     return new Chart(canvas.getContext('2d'), {
       type: 'radar',
-      data: {
-        labels: ['Done', 'Tender', 'Juicy', 'Bark', 'Smoke'],
-        datasets: [{
-          data: [0, 0, 0, 0, 0],
-          borderColor: css('--score-line', '#315CFF'),
-          backgroundColor: 'rgba(49, 92, 255, 0.16)',
-          borderWidth: 2,
-          pointRadius: 2
-        }]
-      },
+      data: { labels: ['Done', 'Tender', 'Juicy', 'Bark', 'Smoke'],
+              datasets: [{ data: [0,0,0,0,0],
+                           borderColor: css('--score-line', '#315CFF'),
+                           backgroundColor: 'rgba(49,92,255,0.16)',
+                           borderWidth: 2, pointRadius: 2 }] },
       options: {
-        animation: false,
-        responsive: true,
-        maintainAspectRatio: false,
+        animation: false, responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { enabled: false } },
-        scales: {
-          r: {
-            min: 0,
-            max: 100,
-            ticks: { display: false, stepSize: 25 },
-            angleLines: { color: css('--chart-grid', 'rgba(15, 23, 42, 0.10)') },
-            grid: { color: css('--chart-grid', 'rgba(15, 23, 42, 0.10)') },
-            pointLabels: { color: css('--text-secondary', '#475569'), font: { size: 11 } }
-          }
-        }
+        scales: { r: { min: 0, max: 100, ticks: { display: false, stepSize: 25 },
+                       angleLines: { color: css('--chart-grid', 'rgba(15,23,42,0.10)') },
+                       grid: { color: css('--chart-grid', 'rgba(15,23,42,0.10)') },
+                       pointLabels: { color: css('--text-secondary', '#475569'), font: { size: 11 } } } }
       }
     });
   }
 
   function eventAnnotationStyle(kind) {
-    // Color flag by physical category. Cited tones map to PHYSICS.md sections.
     if (kind === 'ignite' || kind === 'refuel') return { color: '#E5483D', symbol: '🔥' };
     if (kind === 'wood')                        return { color: '#C57A2A', symbol: '🪵' };
     if (kind === 'wrap')                        return { color: '#6B7280', symbol: '📦' };
@@ -462,7 +440,6 @@
 
   function buildEventAnnotations(events) {
     var ann = {};
-    if (!events) return ann;
     events.forEach(function (e, i) {
       var sty = eventAnnotationStyle(e.kind);
       var labelText;
@@ -470,40 +447,34 @@
       else if (e.kind === 'ignite') labelText = sty.symbol + e.n;
       else                          labelText = sty.symbol;
       ann['ev-' + i] = {
-        type: 'line',
-        scaleID: 'x',
-        value: e.t,
-        borderColor: sty.color,
-        borderWidth: 1.25,
-        borderDash: [3, 4],
+        type: 'line', scaleID: 'x', value: e.t,
+        borderColor: sty.color, borderWidth: 1.25, borderDash: [3, 4],
         drawTime: 'beforeDatasetsDraw',
-        label: {
-          display: true,
-          content: labelText,
-          position: 'start',
-          backgroundColor: sty.color,
-          color: '#fff',
-          font: { size: 9, weight: '700' },
-          padding: { top: 1, bottom: 1, left: 4, right: 4 },
-          borderRadius: 2,
-          yAdjust: -4
-        }
+        label: { display: true, content: labelText, position: 'start',
+                 backgroundColor: sty.color, color: '#fff',
+                 font: { size: 9, weight: '700' }, padding: { top: 1, bottom: 1, left: 4, right: 4 },
+                 borderRadius: 2, yAdjust: -4 }
       };
     });
+    // Cursor — vertical solid line, distinct color
+    ann['cursor'] = {
+      type: 'line', scaleID: 'x', value: view.cursorMin,
+      borderColor: '#0F172A', borderWidth: 2,
+      drawTime: 'afterDatasetsDraw',
+      label: { display: true, content: '▼ ' + formatClock(view.cursorMin),
+               position: 'end', backgroundColor: '#0F172A', color: '#fff',
+               font: { size: 10, weight: '700' }, padding: 3, borderRadius: 2 }
+    };
     return ann;
   }
 
   function syncCharts(reset) {
-    var horizon = horizonMin();
     if (view.timelineChart) {
       view.timelineChart.data.datasets[0].data = view.samples.map(function (p) { return { x: p.x, y: p.pit }; });
       view.timelineChart.data.datasets[1].data = view.samples.map(function (p) { return { x: p.x, y: p.meat }; });
-      view.timelineChart.options.scales.x.max = horizon;
-      // Vertical event flags driven by simulator.eventLog
+      view.timelineChart.options.scales.x.max = view.horizonMin;
       var annPlugin = view.timelineChart.options.plugins.annotation;
-      if (annPlugin) {
-        annPlugin.annotations = buildEventAnnotations(view.sim && view.sim.eventLog);
-      }
+      if (annPlugin) annPlugin.annotations = buildEventAnnotations(view.events);
       view.timelineChart.update(reset ? undefined : 'none');
     }
     if (view.scoreChart && view.sim) {
@@ -514,6 +485,7 @@
     }
   }
 
+  // ───────────── Event lanes (chips) ─────────────
   function eventLane(kind) {
     if (kind === 'ignite' || kind === 'refuel' || kind === 'damper') return 'Fire';
     if (kind === 'wood') return 'Smoke';
@@ -534,51 +506,92 @@
     return e.kind;
   }
 
-  function wrapLabelFor(type) {
-    if (type === 'butcher_paper') return 'Paper';
-    if (type === 'aluminum_foil') return 'Foil';
-    if (type === 'foil_boat') return 'Boat';
-    return 'Bare';
-  }
-
   function renderEventLanes() {
     var root = $('event-lanes');
-    if (!root || !view.sim) return;
-    var horizon = horizonMin();
-    var playheadPct = clamp((view.sim.tSimMin / horizon) * 100, 0, 100);
-    var events = view.sim.eventLog || [];
-    root.innerHTML = LANES.map(function (lane) {
-      var chips = events.map(function (e, idx) {
+    if (!root) return;
+    var horizon = view.horizonMin;
+    var cursorPct = clamp((view.cursorMin / horizon) * 100, 0, 100);
+    var html = LANES.map(function (lane) {
+      var chips = view.events.map(function (e, idx) {
         if (eventLane(e.kind) !== lane) return '';
         var left = clamp((e.t / horizon) * 100, 0, 100);
         var label = eventLabel(e);
-        // Each chip is a button so it can be removed by click. Original
-        // event index is preserved on data-idx for accurate splice.
         return '<button type="button" class="event-chip event-' + eventLane(e.kind).toLowerCase()
           + '" style="left:' + left + '%" data-idx="' + idx + '" '
-          + 'title="' + label + ' @ ' + formatClock(e.t) + ' — click to remove · 单击移除">'
+          + 'title="' + label + ' @ ' + formatClock(e.t) + '\nDrag to reschedule · Click to remove">'
           + label + '</button>';
       }).join('');
-      return '<div class="event-row"><span class="lane-label">' + lane + '</span><div class="lane-track"><span class="lane-playhead" style="left:' + playheadPct + '%"></span>' + chips + '</div></div>';
+      return '<div class="event-row" data-lane="' + lane + '">'
+        + '<span class="lane-label">' + lane + '</span>'
+        + '<div class="lane-track" data-track="1"><span class="lane-cursor" style="left:' + cursorPct + '%"></span>'
+        + chips + '</div></div>';
     }).join('');
-    // Delegate chip clicks → remove that event
-    Array.prototype.forEach.call(root.querySelectorAll('.event-chip[data-idx]'), function (chip) {
-      chip.addEventListener('click', function (e) {
-        e.stopPropagation();
-        removeEventByIndex(parseInt(chip.dataset.idx, 10));
-      });
+    root.innerHTML = html;
+
+    // Bind cursor placement on empty track click + chip drag/click
+    Array.prototype.forEach.call(root.querySelectorAll('[data-track]'), bindLaneTrack);
+    Array.prototype.forEach.call(root.querySelectorAll('.event-chip[data-idx]'), bindChip);
+  }
+
+  function bindLaneTrack(track) {
+    track.addEventListener('pointerdown', function (e) {
+      // Ignore clicks on chips — those have their own handlers
+      if (e.target.closest('.event-chip')) return;
+      var rect = track.getBoundingClientRect();
+      var pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+      setCursor(pct * view.horizonMin);
     });
   }
 
+  function bindChip(chip) {
+    var dragging = false;
+    var moved = false;
+    var startX = 0;
+    var startT = 0;
+    var idx = parseInt(chip.dataset.idx, 10);
+    var trackRect = null;
+
+    chip.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      dragging = true; moved = false;
+      startX = e.clientX;
+      startT = view.events[idx].t;
+      trackRect = chip.parentElement.getBoundingClientRect();
+      try { chip.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    chip.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      var dx = e.clientX - startX;
+      if (Math.abs(dx) > 3) moved = true;
+      if (!moved) return;
+      var ratio = view.horizonMin / trackRect.width;
+      var newT = clamp(startT + dx * ratio, 0, view.horizonMin);
+      view.events[idx].t = newT;
+      rerenderThrottled();
+    });
+    chip.addEventListener('pointerup', function (e) {
+      if (!dragging) return;
+      dragging = false;
+      try { chip.releasePointerCapture(e.pointerId); } catch (_) {}
+      if (moved) {
+        rerender(false);
+      } else {
+        // pure click → remove
+        removeEventByIndex(idx);
+      }
+    });
+    chip.addEventListener('pointercancel', function () { dragging = false; });
+  }
+
+  // ───────────── Dock ─────────────
   function renderEventDock() {
     var dock = $('event-dock');
     dock.innerHTML = EVENT_DEFS.map(function (ev) {
       return '<button class="event-btn tone-' + ev.tone + '" type="button" data-event="' + ev.id + '">' + ev.label + '</button>';
     }).join('');
     dock.querySelectorAll('[data-event]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        applyEvent(btn.dataset.event);
-      });
+      btn.addEventListener('click', function () { applyEvent(btn.dataset.event); });
     });
   }
 
@@ -587,10 +600,28 @@
     select.value = view.presetId;
     select.addEventListener('change', function () {
       view.presetId = select.value;
-      resetCook();
+      resetToPresetDefaults();
     });
   }
 
+  function populateHorizonSelect() {
+    var select = $('in-horizon');
+    if (!select) return;
+    select.value = String(view.horizonMin);
+    select.addEventListener('change', function () {
+      view.horizonMin = parseInt(select.value, 10) || 720;
+      rerender(true);
+    });
+  }
+
+  function resetToPresetDefaults() {
+    view.preset = Presets.get(view.presetId);
+    view.events = defaultEventsForPreset(view.preset);
+    view.cursorMin = 0;
+    rerender(true);
+  }
+
+  // ───────────── Theme ─────────────
   function applyTheme(mode) {
     if (mode === 'dark') {
       document.documentElement.setAttribute('data-theme', 'dark');
@@ -601,7 +632,6 @@
     }
     try { localStorage.setItem('smoker.theme.v2', mode); } catch (e) {}
   }
-
   function initTheme() {
     var saved = null;
     try { saved = localStorage.getItem('smoker.theme.v2'); } catch (e) {}
@@ -615,34 +645,24 @@
   }
 
   function bindControls() {
-    $('btn-play').addEventListener('click', start);
-    $('btn-step').addEventListener('click', function () {
-      advanceSeconds(15 * 60);
-      syncCharts(false);
-      updateUI();
-    });
-    $('btn-reset').addEventListener('click', resetCook);
-    $('in-speed').addEventListener('change', function () {
-      view.speed = parseFloat($('in-speed').value) || 7200;
-    });
+    $('btn-reset').addEventListener('click', resetToPresetDefaults);
     document.addEventListener('keydown', function (e) {
-      if (e.target && /input|select|textarea/i.test(e.target.tagName)) return;
-      if (e.key === ' ') {
-        e.preventDefault();
-        start();
-      }
-      if (e.key === 'r' || e.key === 'R') resetCook();
+      if (e.target && /input|select|textarea|button/i.test(e.target.tagName)) return;
+      if (e.key === 'r' || e.key === 'R') resetToPresetDefaults();
+      if (e.key === 'z' || e.key === 'Z') applyEvent('undo');
+      if (e.key === 'ArrowLeft')  setCursor(view.cursorMin - 15);
+      if (e.key === 'ArrowRight') setCursor(view.cursorMin + 15);
     });
   }
 
   document.addEventListener('DOMContentLoaded', function () {
     initTheme();
     populatePresetSelect();
+    populateHorizonSelect();
     renderEventDock();
     bindControls();
-    view.speed = parseFloat($('in-speed').value) || 7200;
     view.timelineChart = makeTimelineChart();
     view.scoreChart = makeScoreChart();
-    resetCook();
+    resetToPresetDefaults();
   });
 })();

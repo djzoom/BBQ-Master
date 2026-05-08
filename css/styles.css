@@ -1606,6 +1606,9 @@ body {
   border-radius: 8px;
   background: var(--lane-bg);
   overflow: hidden;
+  cursor: crosshair;        /* hint that you can click to set cursor */
+  user-select: none;
+  touch-action: none;
 }
 
 .lane-track::before {
@@ -1625,6 +1628,28 @@ body {
   background: var(--text);
   opacity: 0.48;
   z-index: 2;
+}
+
+/* Plan-mode cursor — shows where dock buttons will drop new events */
+.lane-cursor {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--text);
+  z-index: 2;
+  pointer-events: none;
+}
+.lane-cursor::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: -4px;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid var(--text);
 }
 
 .event-chip {
@@ -1679,19 +1704,23 @@ body {
 .tone-finish:hover { background: rgba(22, 163, 74, 0.10); }
 .tone-undo:hover { background: rgba(15, 23, 42, 0.08); }
 
-/* Event chips on the lane row are now buttons — clickable to remove. */
+/* Event chips on the lane row are buttons — drag to reschedule, click to remove. */
 button.event-chip {
   font: inherit;
-  cursor: pointer;
+  cursor: grab;
   appearance: none;
   -webkit-appearance: none;
   padding: 0 8px;
   outline: none;
+  touch-action: none;
 }
 button.event-chip:hover {
   filter: brightness(0.95);
-  text-decoration: line-through;
-  text-decoration-thickness: 1.5px;
+  box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.18);
+}
+button.event-chip:active {
+  cursor: grabbing;
+  filter: brightness(0.92);
 }
 button.event-chip:focus-visible {
   box-shadow: 0 0 0 2px rgba(229, 72, 61, 0.45);

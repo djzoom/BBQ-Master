@@ -38,19 +38,16 @@
           <option value="custom">Custom</option>
         </select>
         <strong id="metric-clock">0:00</strong>
-        <span id="metric-phase">Smoke</span>
+        <span id="metric-phase">Cursor</span>
       </div>
       <div class="transport">
-        <button id="btn-play" class="tool-btn primary" type="button" title="Run">▶</button>
-        <button id="btn-step" class="tool-btn" type="button" title="Advance 15 minutes">+15m</button>
-        <button id="btn-reset" class="tool-btn" type="button" title="Reset">↺</button>
-        <select id="in-speed" aria-label="Simulation speed">
-          <option value="60">1×</option>
-          <option value="1800">30×</option>
-          <option value="7200" selected>120×</option>
-          <option value="18000">300×</option>
-          <option value="36000">600×</option>
+        <select id="in-horizon" aria-label="Cook horizon" title="Total cook duration">
+          <option value="360">6 h</option>
+          <option value="720" selected>12 h</option>
+          <option value="1080">18 h</option>
+          <option value="1440">24 h</option>
         </select>
+        <button id="btn-reset" class="tool-btn" type="button" title="Reset to preset defaults">↺ Reset</button>
       </div>
     </div>
 
@@ -107,7 +104,7 @@
 <script src="js/notify.js?v=1"></script>
 
 <!-- UI controller -->
-<script src="js/app.js?v=8"></script>
+<script src="js/app.js?v=9"></script>
 
 </body>
 </html>
