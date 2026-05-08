@@ -637,6 +637,44 @@
     });
   }
 
+  // ───────────── Refuel ladder ─────────────
+  // "Every A min add B coals" — drops a series of refuel events from the
+  // cursor (or t=1 if cursor is at 0) out to the horizon. Existing refuel
+  // events within ±1 min get merged, so re-applying with different params
+  // is a non-destructive update for any already-placed manual coals.
+  function applyLadder(periodMin, count) {
+    if (periodMin < 5)  { toast('Period too short'); return; }
+    if (count < 1)      { toast('Count must be ≥ 1'); return; }
+    var horizon = view.horizonMin;
+    var startT = Math.max(view.cursorMin, 0) + periodMin;
+    var added = 0;
+    for (var t = startT; t < horizon - 5; t += periodMin) {
+      addCoalEvent(t, 'refuel', count);
+      added++;
+    }
+    if (added === 0) { toast('No room in horizon for ladder'); return; }
+    toast('Ladder: +' + count + ' coal × ' + added + ' (every ' + periodMin + ' min)');
+    rerender(false);
+  }
+
+  function bindLadderControls() {
+    var period = $('in-ladder-period');
+    var count  = $('in-ladder-count');
+    var btn    = $('btn-ladder');
+    if (!period || !count || !btn) return;
+    btn.addEventListener('click', function () {
+      var p = parseInt(period.value, 10);
+      var c = parseInt(count.value, 10);
+      applyLadder(p, c);
+    });
+    // Pressing Enter inside either field also triggers
+    [period, count].forEach(function (el) {
+      el.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); btn.click(); }
+      });
+    });
+  }
+
   function bindOverrideInputs() {
     var amb = $('in-ambient');
     var wt  = $('in-weight');
@@ -715,6 +753,7 @@
     populatePresetSelect();
     populateHorizonSelect();
     bindOverrideInputs();
+    bindLadderControls();
     renderEventDock();
     bindControls();
     view.timelineChart = makeTimelineChart();

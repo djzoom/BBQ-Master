@@ -51,6 +51,16 @@
         <span id="metric-phase">Cursor</span>
       </div>
       <div class="transport">
+        <span class="ladder" title="Periodic refuel: every A minutes add B coals from the cursor onward">
+          <span class="ladder-lbl">Ladder · 加炭节奏</span>
+          <span class="ladder-row">every
+            <input id="in-ladder-period" type="number" min="10" max="180" step="5" value="45">
+            min&nbsp;+
+            <input id="in-ladder-count"  type="number" min="1"  max="12" step="1" value="4">
+            coal
+            <button id="btn-ladder" type="button" class="ladder-btn">Apply</button>
+          </span>
+        </span>
         <select id="in-horizon" aria-label="Cook horizon" title="Total cook duration">
           <option value="360">6 h</option>
           <option value="720" selected>12 h</option>
@@ -114,7 +124,7 @@
 <script src="js/notify.js?v=1"></script>
 
 <!-- UI controller -->
-<script src="js/app.js?v=10"></script>
+<script src="js/app.js?v=11"></script>
 
 </body>
 </html>
