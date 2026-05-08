@@ -1677,8 +1677,10 @@ body {
 
 .event-lanes {
   --lane-label-w: 74px;
+  --track-right: 0px;
   display: grid;
   gap: 6px;
+  padding-right: var(--track-right);  /* align right edge with chart plot area */
 }
 
 .event-row {

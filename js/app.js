@@ -24,7 +24,6 @@
 
   var LANES = ['Fire', 'Smoke', 'Wrap', 'Handling'];
   var EVENT_DEFS = [
-    { id: 'ignite',      label: 'Light 12',  lane: 'Fire',     tone: 'fire' },
     { id: 'refuel-1',    label: '+1 Coal',   lane: 'Fire',     tone: 'fire' },
     { id: 'refuel-4',    label: '+4 Coal',   lane: 'Fire',     tone: 'fire' },
     { id: 'coal-minus',  label: '−1 Coal',   lane: 'Fire',     tone: 'fire-minus' },
@@ -512,6 +511,23 @@
       view.scoreChart.data.datasets[0].data = score.scores;
       view.scoreChart.update(reset ? undefined : 'none');
     }
+    syncLaneAlignment();
+  }
+
+  // Make event lanes share the chart's plot area horizontally so chips
+  // line up under their corresponding x positions on the curve. Reads the
+  // chart's actual chartArea bounds and writes them as CSS vars.
+  function syncLaneAlignment() {
+    var c = view.timelineChart;
+    if (!c || !c.chartArea) return;
+    var canvasW = c.canvas.clientWidth;
+    if (!canvasW) return;
+    var leftPx = Math.round(c.chartArea.left);
+    var rightGap = Math.round(canvasW - c.chartArea.right);
+    var lanes = $('event-lanes');
+    if (!lanes) return;
+    lanes.style.setProperty('--lane-label-w', leftPx + 'px');
+    lanes.style.setProperty('--track-right', rightGap + 'px');
   }
 
   // ───────────── Event lanes (chips) ─────────────
@@ -788,5 +804,7 @@
     view.timelineChart = makeTimelineChart();
     view.scoreChart = makeScoreChart();
     resetToPresetDefaults();
+    // Re-align lanes when the chart relayouts (window resize, sidebar toggle)
+    window.addEventListener('resize', syncLaneAlignment);
   });
 })();
