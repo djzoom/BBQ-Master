@@ -77,24 +77,12 @@
   function formatF(c) { return Math.round(C.cToF(c)) + 'F'; }
 
   // ───────────── Default events from preset ─────────────
+  // Empty by design — the preset only seeds the inputs (weight, ambient,
+  // equipment, thickness). The user lays out every event themselves so
+  // the curves start from a blank slate: pit at Pit₀, meat at Meat₀,
+  // no fire, no wrap. Use the dock and ladder to build the cook.
   function defaultEventsForPreset(p) {
-    var ev = [];
-    // Light at t=0
-    ev.push({ t: 0, kind: 'ignite', n: p.policy.igniteN || 12 });
-    // Wood chunks from policy
-    if (p.policy.woodChunks) {
-      p.policy.woodChunks.forEach(function (w) {
-        ev.push({ t: w.tMin, kind: 'wood', mass: 0.15, species: w.species });
-      });
-    }
-    // Two refuel events at sensible defaults
-    ev.push({ t: 60,  kind: 'refuel', n: 4 });
-    ev.push({ t: 150, kind: 'refuel', n: 4 });
-    // Wrap (paper by default for low-and-slow) around 4h
-    if (p.policy.wrapType && p.policy.wrapType !== 'none') {
-      ev.push({ t: 240, kind: 'wrap', type: p.policy.wrapType });
-    }
-    return ev;
+    return [];
   }
 
   // ───────────── Replay engine ─────────────
