@@ -7,11 +7,6 @@
  *   1. Creates a fresh sim state from preset.inputs
  *   2. Replays events in time order, stepping the physics each minute
  *   3. Returns samples + final state, which the UI renders
- *
- * There is no Run/Pause anymore — the chart shows the FULL predicted
- * cook from t=0 to horizon as soon as inputs change. Drag a chip to
- * reschedule; click a chip to remove; click an empty lane to set the
- * cursor where new dock-button events are dropped.
  */
 (function () {
   'use strict';
@@ -59,8 +54,102 @@
     timelineChart: null,
     scoreChart: null,
     replayPending: false,
-    history: []
+    history: [],
+    lang: (function () { try { return localStorage.getItem('smoker.lang') || 'zh'; } catch (e) { return 'zh'; } })()
   };
+
+  var PHASES = {
+    startup: { cls: 'phase-startup', icon: '⚫', zh: '待引火',     en: 'Awaiting ignition' },
+    light:   { cls: 'phase-light',   icon: '🔥', zh: '引火中',     en: 'Lighting fire' },
+    stable:  { cls: 'phase-stable',  icon: '🔵', zh: '稳态烟熏',   en: 'Smoke stable' },
+    bark:    { cls: 'phase-bark',    icon: '🟤', zh: '树皮形成',   en: 'Bark forming' },
+    stall:   { cls: 'phase-stall',   icon: '🟡', zh: 'Stall 停滞', en: 'Stall plateau' },
+    push:    { cls: 'phase-push',    icon: '🔥', zh: '推过 stall', en: 'Push past stall' },
+    finish:  { cls: 'phase-finish',  icon: '🟢', zh: '可出炉',     en: 'Probe-tender' },
+    rest:    { cls: 'phase-rest',    icon: '⚪', zh: '静置中',     en: 'Resting' }
+  };
+
+  function detectPhase(s) {
+    if (!s) return 'startup';
+    if (s.phase === 'rest' || s.phase === 'slice') return 'rest';
+    var n = s.T.length - 1;
+    var coreF = C.cToF(s.T[n]);
+    var pitF  = C.cToF(s.tPitC);
+    var coalsActive = s.coals && s.coals.length > 0;
+    if ((s.C || 0) >= 0.85 || coreF >= 200) return 'finish';
+    if (s.wrapState && s.wrapState !== 'none') return 'push';
+    if (coreF >= 148 && coreF <= 175) return 'stall';
+    if (!coalsActive) return 'startup';
+    if (pitF < 200) return 'light';
+    if (coreF >= 100) return 'bark';
+    return 'stable';
+  }
+
+  function aiSuggestion(s, phaseId) {
+    var lang = view.lang;
+    if (!s) return { verdict: '', why: '', confidence: '' };
+    var n = s.T.length - 1;
+    var coreF = Math.round(C.cToF(s.T[n]));
+    var pitF  = Math.round(C.cToF(s.tPitC));
+    var msgs = {
+      startup: {
+        zh: { v: '点 +8 预热启动炉子。', w: '8 块备长炭在桶式炉里峰值约 240°F，足够低温慢烤。空炉热惯性需要 30-40 分钟才稳态。', c: '初始' },
+        en: { v: 'Light +8 to preheat.', w: '8 binchotan pieces peak around 240°F in a drum smoker. Empty pit needs ~30-40 min to stabilize.', c: 'Pre-cook' }
+      },
+      light: {
+        zh: { v: '等炉温到 230-260°F 再上肉。', w: '当前 pit ' + pitF + '°F，正在升温。冷肉下锅会拉低 30-40°F。', c: '引火期' },
+        en: { v: 'Wait until pit hits 230-260°F before adding meat.', w: 'Pit at ' + pitF + '°F, climbing. Cold meat will pull pit down 30-40°F when added.', c: 'Lighting' }
+      },
+      stable: {
+        zh: { v: '炉子稳了，可以放肉。烟木现在塞进去最好。', w: 'Pit ' + pitF + '°F 在烟稳区。Smoke ring 在表面 < 60°C 的前 90 分钟最容易吸收。', c: '稳态' },
+        en: { v: 'Pit is stable. Add meat now and load smoke wood.', w: 'Pit at ' + pitF + '°F in the clean-smoke band. Smoke ring forms best while surface < 60°C in the first 90 min.', c: 'Stable' }
+      },
+      bark: {
+        zh: { v: '盯紧 meat 温度，stall 即将到来。', w: 'Meat 现在 ' + coreF + '°F，到 148°F 会开始 stall plateau。趁现在让烟入味、树皮成形。', c: '树皮期' },
+        en: { v: 'Bark is forming. Watch for stall starting around 148°F.', w: 'Meat at ' + coreF + '°F. Wet-bulb evap will plateau the temp soon — let smoke and crust build now.', c: 'Bark phase' }
+      },
+      stall: {
+        zh: { v: '建议包届夫纸推过 stall。', w: 'Meat 卡在 ' + coreF + '°F，蒸发吸热占主导。包纸早约 2 小时完成，bark 略软（−8 分），juicy +6 分。', c: '建议' },
+        en: { v: 'Wrap in butcher paper to push through the stall.', w: 'Meat plateaued at ' + coreF + '°F. Evap is winning. Wrapping cuts ~2 h off finish; bark softens slightly.', c: 'Stall action' }
+      },
+      push: {
+        zh: { v: '继续等到 200-205°F 探针滑入。', w: 'Meat 现在 ' + coreF + '°F，再升 ' + Math.max(0, 203 - coreF) + '°F 就能 probe-tender。约 1-2 小时。', c: '冲温期' },
+        en: { v: 'Hold steady until 200-205°F and probe-tender.', w: 'Meat at ' + coreF + '°F, ~' + Math.max(0, 203 - coreF) + '°F to go. About 1-2 h.', c: 'Push phase' }
+      },
+      finish: {
+        zh: { v: '出炉，铝箔包静置 1 小时。', w: 'Collagen 已转化 ' + Math.round((s.C || 0) * 100) + '%，meat ' + coreF + '°F。静置让肉汁回流。', c: '出炉' },
+        en: { v: 'Pull and rest in foil for 1 h.', w: 'Collagen ' + Math.round((s.C || 0) * 100) + '% converted, meat ' + coreF + '°F. Rest lets juices redistribute.', c: 'Done' }
+      },
+      rest: {
+        zh: { v: '静置中，等到吃饭时间切片。', w: '保温箱 60-71°C，每多 15 分钟肉汁多保留约 3%。', c: '静置' },
+        en: { v: 'Resting. Slice at serving time.', w: 'Hold at 60-71°C. Each extra 15 min retains ~3% more juice.', c: 'Resting' }
+      }
+    };
+    var pick = (msgs[phaseId] && msgs[phaseId][lang]) || msgs.startup.zh;
+    return { verdict: pick.v, why: pick.w, confidence: pick.c };
+  }
+
+  function computeETA() {
+    for (var i = 0; i < view.samples.length; i++) {
+      if (view.samples[i].tender >= 99) return view.samples[i].x;
+    }
+    return null;
+  }
+
+  function setLang(l) {
+    view.lang = l;
+    try { localStorage.setItem('smoker.lang', l); } catch (e) {}
+    var btn = $('lang-toggle');
+    if (btn) btn.textContent = l === 'zh' ? 'EN' : '中';
+    document.documentElement.setAttribute('lang', l === 'zh' ? 'zh-CN' : 'en');
+    rerender(false);
+  }
+  function bindLangToggle() {
+    var btn = $('lang-toggle');
+    if (!btn) return;
+    btn.textContent = view.lang === 'zh' ? 'EN' : '中';
+    btn.addEventListener('click', function () { setLang(view.lang === 'zh' ? 'en' : 'zh'); });
+  }
 
   function $(id) { return document.getElementById(id); }
   function css(name, fallback) {
@@ -258,19 +347,11 @@
     var smokeGood = s.smoke ? s.smoke.good : 0;
     var smokeBad  = s.smoke ? s.smoke.bad  : 0;
     var wrapped = s.wrapState && s.wrapState !== 'none';
-
-    // §4 collagen
     var tender = clamp(((s.C || 0) / 0.85) * 100, 0, 100);
-    // §3 water budget. Raw meat (w=0.75) maps to juicy=100; dried-out
-    // → 0. Tallow + spritz + wrap all push w back up via physics.
     var juicy  = clamp((water / 0.75) * 100, 0, 100);
-    // §8.7 doneness
     var doneness = clamp(100 - Math.abs(coreF - 203) * 2.5, 0, 100);
-    // §5 smoke uptake — not smoked = 0, no baseline
     var smoke = clamp(smokeGood * 60 - smokeBad * 35, 0, 100);
-    // Bark = simulator's crust integrator (temp × dryness × wrap_open)
     var bark = clamp((s.crust || 0) * 90 + smokeGood * 15, 0, 100);
-
     return { doneness: doneness, tender: tender, juicy: juicy, bark: bark, smoke: smoke };
   }
 
@@ -335,19 +416,46 @@
   function updateUI() {
     if (!view.sim) return;
     var clock = formatClockOfDay(view.overrides.tStartMin + view.cursorMin);
-    $('metric-clock').textContent = clock;
-    $('metric-phase').textContent = '+' + formatClock(view.cursorMin) + ' · 光标';
+    if ($('metric-clock')) $('metric-clock').textContent = clock;
+    if ($('metric-phase')) $('metric-phase').textContent = '+' + formatClock(view.cursorMin);
     var atCursor = sampleAtTime(view.cursorMin);
-    $('metric-pit').textContent = Math.round(atCursor.pit) + 'F';
-    $('metric-meat').textContent = Math.round(atCursor.meat) + 'F';
-    $('metric-damper').textContent = view.sim.damperPct + '%';
-    $('metric-wrap').textContent = wrapLabel(view.sim);
-    $('score-overall').textContent = scoreCook().overall;
+    if ($('metric-pit')) $('metric-pit').textContent = Math.round(atCursor.pit);
+    if ($('metric-meat')) $('metric-meat').textContent = Math.round(atCursor.meat);
+    if ($('metric-damper')) $('metric-damper').textContent = view.sim.damperPct + '%';
+    if ($('metric-wrap')) $('metric-wrap').textContent = wrapLabel(view.sim);
+    if ($('score-overall')) $('score-overall').textContent = scoreCook().overall;
     var p = physicsReadouts();
-    if ($('metric-collagen')) $('metric-collagen').textContent = p.collagen + '%';
-    if ($('metric-water'))    $('metric-water').textContent    = p.water + '%';
-    if ($('metric-stall'))    $('metric-stall').textContent    = p.stall + '%';
-    if ($('metric-fire'))     $('metric-fire').textContent     = p.qFireW + ' W';
+    if ($('metric-collagen')) $('metric-collagen').textContent = p.collagen;
+    if ($('metric-water'))    $('metric-water').textContent    = p.water;
+    if ($('metric-stall'))    $('metric-stall').textContent    = p.stall;
+    if ($('metric-fire'))     $('metric-fire').textContent     = p.qFireW;
+
+    var phaseId = detectPhase(view.sim);
+    var P = PHASES[phaseId];
+    var pill = $('phase-pill');
+    if (pill && P) {
+      pill.className = 'phase-pill ' + P.cls;
+      pill.textContent = P.icon + ' ' + (view.lang === 'zh' ? P.zh : P.en);
+    }
+
+    var ai = aiSuggestion(view.sim, phaseId);
+    if ($('ai-verdict'))    $('ai-verdict').textContent    = ai.verdict;
+    if ($('ai-why'))        $('ai-why').textContent        = ai.why;
+    if ($('ai-confidence')) $('ai-confidence').textContent = ai.confidence;
+
+    var etaMin = computeETA();
+    var etaEl = $('metric-eta');
+    var etaRangeEl = $('metric-eta-range');
+    if (etaEl) {
+      if (etaMin != null) {
+        etaEl.textContent = formatClockOfDay(view.overrides.tStartMin + etaMin);
+        if (etaRangeEl) etaRangeEl.textContent = '+' + formatClock(etaMin);
+      } else {
+        etaEl.textContent = '—';
+        if (etaRangeEl) etaRangeEl.textContent = view.lang === 'zh' ? '需要更多火' : 'need more fuel';
+      }
+    }
+
     renderEventLanes();
   }
 
@@ -367,17 +475,12 @@
   function makeTimelineChart() {
     if (!window.Chart) return null;
     var canvas = $('chart-timeline');
-    var DIM_COLORS = {
-      done: '#16A34A', tender: '#B85B2D', juicy: '#2A8AC5',
-      bark: '#6B4F32', smoke: '#7E57C2'
-    };
+    var DIM_COLORS = { done: '#16A34A', tender: '#B85B2D', juicy: '#2A8AC5', bark: '#6B4F32', smoke: '#7E57C2' };
     return new Chart(canvas.getContext('2d'), {
       type: 'line',
       data: { datasets: [
-        { label: 'Pit',  yAxisID: 'y', data: [], borderColor: css('--pit-line', '#E5483D'),
-          backgroundColor: 'rgba(229,72,61,0.10)', borderWidth: 3, pointRadius: 0, tension: 0.25 },
-        { label: 'Meat', yAxisID: 'y', data: [], borderColor: css('--meat-line', '#0F8C8C'),
-          backgroundColor: 'rgba(15,140,140,0.10)', borderWidth: 3, pointRadius: 0, tension: 0.25, fill: true },
+        { label: 'Pit',  yAxisID: 'y', data: [], borderColor: '#E8763A', backgroundColor: 'rgba(232,118,58,0.10)', borderWidth: 3, pointRadius: 0, tension: 0.25 },
+        { label: 'Meat', yAxisID: 'y', data: [], borderColor: '#F5F0E6', backgroundColor: 'rgba(245,240,230,0.10)', borderWidth: 3, pointRadius: 0, tension: 0.25, fill: true },
         { label: 'Done',   yAxisID: 'y2', data: [], borderColor: DIM_COLORS.done,   borderWidth: 1.5, pointRadius: 0, tension: 0.2, borderDash: [2, 3] },
         { label: 'Tender', yAxisID: 'y2', data: [], borderColor: DIM_COLORS.tender, borderWidth: 1.5, pointRadius: 0, tension: 0.2, borderDash: [2, 3] },
         { label: 'Juicy',  yAxisID: 'y2', data: [], borderColor: DIM_COLORS.juicy,  borderWidth: 1.5, pointRadius: 0, tension: 0.2, borderDash: [2, 3] },
@@ -388,7 +491,7 @@
         animation: false, parsing: false, responsive: true, maintainAspectRatio: false,
         interaction: { mode: 'nearest', intersect: false },
         plugins: {
-          legend: { align: 'start', labels: { boxWidth: 10, color: css('--text-secondary', '#475569'), font: { size: 12 } } },
+          legend: { align: 'start', labels: { boxWidth: 10, color: '#8B8478', font: { size: 11 } } },
           tooltip: { callbacks: {
             title: function (items) { var v = items[0].parsed.x; return formatClockOfDay(view.overrides.tStartMin + v) + '  (+' + formatClock(v) + ')'; },
             label: function (ctx) { return ctx.dataset.label + ' ' + Math.round(ctx.parsed.y) + 'F'; }
@@ -397,15 +500,15 @@
         },
         scales: {
           x: { type: 'linear', min: 0, max: 720,
-               grid: { color: css('--chart-grid', 'rgba(15,23,42,0.09)') },
-               ticks: { color: css('--text-muted', '#94A3B8'), maxTicksLimit: 9,
+               grid: { color: 'rgba(245,240,230,0.06)' },
+               ticks: { color: '#8B8478', maxTicksLimit: 9,
                  callback: function (v) { return [formatClockOfDay(view.overrides.tStartMin + v), '+' + formatClock(v)]; } } },
           y: { position: 'left', min: 30, max: 330,
-               grid: { color: css('--chart-grid', 'rgba(15,23,42,0.09)') },
-               ticks: { color: css('--text-muted', '#94A3B8'), callback: function (v) { return v + 'F'; } } },
+               grid: { color: 'rgba(245,240,230,0.06)' },
+               ticks: { color: '#8B8478', callback: function (v) { return v + 'F'; } } },
           y2: { position: 'right', min: 0, max: 100,
                 grid: { drawOnChartArea: false },
-                ticks: { color: css('--text-muted', '#94A3B8'), callback: function (v) { return v; }, stepSize: 25 } }
+                ticks: { color: '#8B8478', callback: function (v) { return v; }, stepSize: 25 } }
         }
       }
     });
@@ -418,30 +521,30 @@
       type: 'radar',
       data: { labels: ['Done', 'Tender', 'Juicy', 'Bark', 'Smoke'],
               datasets: [{ data: [0,0,100,0,0],
-                           borderColor: css('--score-line', '#315CFF'),
-                           backgroundColor: 'rgba(49,92,255,0.16)',
+                           borderColor: '#E8763A',
+                           backgroundColor: 'rgba(232,118,58,0.18)',
                            borderWidth: 2, pointRadius: 2 }] },
       options: {
         animation: false, responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { enabled: false } },
         scales: { r: { min: 0, max: 100, ticks: { display: false, stepSize: 25 },
-                       angleLines: { color: css('--chart-grid', 'rgba(15,23,42,0.10)') },
-                       grid: { color: css('--chart-grid', 'rgba(15,23,42,0.10)') },
-                       pointLabels: { color: css('--text-secondary', '#475569'), font: { size: 11 } } } }
+                       angleLines: { color: 'rgba(245,240,230,0.08)' },
+                       grid: { color: 'rgba(245,240,230,0.08)' },
+                       pointLabels: { color: '#8B8478', font: { size: 11 } } } }
       }
     });
   }
 
   function eventAnnotationStyle(kind) {
-    if (kind === 'ignite' || kind === 'refuel') return { color: '#E5483D', symbol: '🔥' };
-    if (kind === 'wood')                        return { color: '#C57A2A', symbol: '🌲' };
-    if (kind === 'wrap')                        return { color: '#6B7280', symbol: '📦' };
-    if (kind === 'spritz')                      return { color: '#2A8AC5', symbol: '💧' };
-    if (kind === 'tallow')                      return { color: '#D4A93C', symbol: '🧈' };
-    if (kind === 'lid')                         return { color: '#94A3B8', symbol: '↕' };
-    if (kind === 'damper')                      return { color: '#475569', symbol: '◎' };
-    if (kind === 'pull' || kind === 'slice')    return { color: '#16A34A', symbol: '✓' };
-    return { color: '#94A3B8', symbol: '·' };
+    if (kind === 'ignite' || kind === 'refuel') return { color: '#E8763A', symbol: '🔥' };
+    if (kind === 'wood')                        return { color: '#8B6F47', symbol: '🌲' };
+    if (kind === 'wrap')                        return { color: '#5A7A93', symbol: '📦' };
+    if (kind === 'spritz')                      return { color: '#5A7A93', symbol: '💧' };
+    if (kind === 'tallow')                      return { color: '#D9A349', symbol: '🧈' };
+    if (kind === 'lid')                         return { color: '#8B8478', symbol: '↕' };
+    if (kind === 'damper')                      return { color: '#4A4640', symbol: '◎' };
+    if (kind === 'pull' || kind === 'slice')    return { color: '#7B9B5C', symbol: '✓' };
+    return { color: '#8B8478', symbol: '·' };
   }
 
   function buildEventAnnotations(events) {
@@ -466,9 +569,9 @@
                     + ' (+' + formatClock(view.cursorMin) + ')';
     ann['cursor'] = {
       type: 'line', scaleID: 'x', value: view.cursorMin,
-      borderColor: '#0F172A', borderWidth: 2, drawTime: 'afterDatasetsDraw',
+      borderColor: '#E8763A', borderWidth: 2, drawTime: 'afterDatasetsDraw',
       label: { display: true, content: cursorLabel, position: 'end',
-               backgroundColor: '#0F172A', color: '#fff',
+               backgroundColor: '#E8763A', color: '#fff',
                font: { size: 10, weight: '700' }, padding: 3, borderRadius: 2 }
     };
     return ann;
@@ -547,7 +650,7 @@
         var label = eventLabel(e);
         return '<button type="button" class="event-chip event-' + eventLane(e.kind).toLowerCase()
           + '" style="left:' + left + '%" data-idx="' + idx + '" '
-          + 'title="' + label + ' @ ' + formatClock(e.t) + '\nDrag to reschedule · Click to remove">'
+          + 'title="' + label + ' @ ' + formatClock(e.t) + '">'
           + label + '</button>';
       }).join('');
       return '<div class="event-row" data-lane="' + lane + '">'
@@ -610,6 +713,10 @@
     dock.querySelectorAll('[data-event]').forEach(function (btn) {
       btn.addEventListener('click', function () { applyEvent(btn.dataset.event); });
     });
+    // Primary dock buttons (.dock-btn outside event-dock) also need wiring
+    document.querySelectorAll('.dock-btn[data-event]').forEach(function (btn) {
+      btn.addEventListener('click', function () { applyEvent(btn.dataset.event); });
+    });
   }
 
   function populatePresetSelect() {
@@ -636,7 +743,7 @@
     pushHistory();
     var added = 0;
     for (var t = startMin; t <= endMin; t += periodMin) { addCoalEvent(t, 'refuel', count); added++; }
-    toast('Ladder: +' + count + ' coal × ' + added + ' (every ' + periodMin + ' min, from ' + formatClock(startMin) + ' to ' + formatClock(endMin) + ')');
+    toast('Ladder: +' + count + ' coal × ' + added + ' (every ' + periodMin + ' min)');
     rerender(false);
   }
 
@@ -717,7 +824,7 @@
     var saved = null;
     try { saved = localStorage.getItem('smoker.theme.v2'); } catch (e) {}
     if (saved) applyTheme(saved);
-    else applyTheme(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    else applyTheme('dark');
     $('btn-theme').addEventListener('click', function () {
       var current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
       applyTheme(current === 'dark' ? 'light' : 'dark');
@@ -738,6 +845,7 @@
 
   document.addEventListener('DOMContentLoaded', function () {
     initTheme();
+    bindLangToggle();
     populatePresetSelect();
     populateHorizonSelect();
     bindOverrideInputs();
