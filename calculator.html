@@ -1,0 +1,1329 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="almanac">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Smoker Almanac № 1 — The Quality Predictor</title>
+<meta name="description" content="An almanac for pitmasters. Input your cut, fire, wrap, and rest. Get a predicted quality score and a step-by-step schedule with calendar reminders.">
+<meta name="theme-color" content="#C84B23">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;0,9..144,900;1,9..144,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ═══════════════════════════════════════════════════════════════
+     SMOKER ALMANAC — HIPSTER PALETTE
+     Cream paper · ember · sage · faded denim · ink
+     ═══════════════════════════════════════════════════════════════ */
+  :root {
+    --paper:        #F4ECDD;
+    --paper-deep:   #EAE0CB;
+    --paper-card:   #FBF5E8;
+    --ink:          #1F1A14;
+    --ink-soft:     #4A3F30;
+    --ink-faint:    #8B7E6B;
+    --ember:        #C84B23;
+    --ember-deep:   #9C3818;
+    --ember-soft:   rgba(200, 75, 35, 0.10);
+    --sage:         #6F7E5A;
+    --sage-soft:    rgba(111, 126, 90, 0.12);
+    --denim:        #3F5970;
+    --kraft:        #8B6F47;
+    --rule:         rgba(31, 26, 20, 0.18);
+    --rule-soft:    rgba(31, 26, 20, 0.08);
+    --serif:        'Fraunces', 'Times New Roman', serif;
+    --sans:         'Inter', system-ui, sans-serif;
+    --mono:         'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  /* paper grain — subtle noise via SVG */
+  html {
+    background: var(--paper);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' seed='3'/><feColorMatrix values='0 0 0 0 0.12 0 0 0 0 0.10 0 0 0 0 0.07 0 0 0 0.07 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    color: var(--ink);
+    line-height: 1.55;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ═══ Layout ═══ */
+  .almanac { max-width: 880px; margin: 0 auto; padding: 24px 20px max(40px, env(safe-area-inset-bottom)); }
+
+  /* ═══ Masthead ═══ */
+  .masthead {
+    border-top: 6px double var(--ink);
+    border-bottom: 1px solid var(--ink);
+    padding: 18px 0 14px;
+    margin-bottom: 28px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    align-items: end;
+  }
+  .masthead-title {
+    font-family: var(--serif);
+    font-weight: 900;
+    font-size: clamp(1.6rem, 5.5vw, 2.4rem);
+    line-height: 1;
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+  .masthead-title em {
+    font-style: italic;
+    font-weight: 500;
+    color: var(--ember);
+  }
+  .masthead-zh {
+    display: block;
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 0.55em;
+    color: var(--ink-soft);
+    letter-spacing: 0.04em;
+    margin-top: 4px;
+  }
+  .masthead-meta {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--ink-soft);
+    text-align: right;
+    line-height: 1.4;
+  }
+  .masthead-meta a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--ink-faint); }
+  .masthead-meta a:hover { color: var(--ember); border-bottom-color: var(--ember); }
+
+  /* ═══ Lede ═══ */
+  .lede {
+    font-family: var(--serif);
+    font-size: clamp(1.125rem, 2.5vw, 1.5rem);
+    line-height: 1.4;
+    color: var(--ink-soft);
+    margin: 0 0 36px;
+    max-width: 38ch;
+  }
+  .lede em { color: var(--ember); font-style: italic; }
+  .lede .zh { display: block; font-size: 0.75em; margin-top: 6px; color: var(--ink-faint); }
+
+  /* ═══ Section heading ═══ */
+  .section {
+    margin: 36px 0 0;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule);
+  }
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin: 0 0 18px;
+  }
+  .section-head .num {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 1.5rem;
+    font-weight: 500;
+    color: var(--ember);
+    min-width: 2ch;
+  }
+  .section-head h2 {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: 1.35rem;
+    margin: 0;
+    letter-spacing: 0.01em;
+  }
+  .section-head h2 .zh {
+    display: inline;
+    font-weight: 500;
+    color: var(--ink-soft);
+    font-size: 0.75em;
+    margin-left: 8px;
+    font-style: italic;
+  }
+  .section-rule {
+    border: 0;
+    border-bottom: 1px dotted var(--rule);
+    margin: 0 0 18px;
+    height: 0;
+  }
+
+  /* ═══ Quick presets ═══ */
+  .preset-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin: 0 0 8px;
+  }
+  .preset-chip {
+    font: inherit;
+    background: var(--paper-card);
+    border: 1px solid var(--rule);
+    border-radius: 0;
+    padding: 14px 10px;
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.12s;
+    color: inherit;
+  }
+  .preset-chip:hover {
+    border-color: var(--ink);
+    transform: translateY(-1px);
+  }
+  .preset-chip[aria-pressed="true"] {
+    background: var(--ember);
+    border-color: var(--ember);
+    color: var(--paper);
+  }
+  .preset-chip .icon { font-size: 1.5rem; display: block; margin-bottom: 4px; }
+  .preset-chip .name {
+    font-family: var(--serif); font-weight: 600; font-size: 0.875rem; line-height: 1.2;
+  }
+  .preset-chip .zh { display: block; font-size: 0.7rem; opacity: 0.85; margin-top: 2px; }
+
+  /* ═══ Form fields ═══ */
+  .field-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 18px 24px;
+  }
+  .field {
+    display: grid;
+    gap: 6px;
+  }
+  .field-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--ink-soft);
+    font-weight: 600;
+  }
+  .field-label .zh { color: var(--ink-faint); margin-left: 8px; font-weight: 400; letter-spacing: 0; text-transform: none; }
+  .field select, .field input[type="number"], .field input[type="datetime-local"] {
+    font-family: var(--sans);
+    font-size: 1rem;
+    padding: 10px 12px;
+    background: var(--paper-card);
+    border: 1px solid var(--rule);
+    border-radius: 0;
+    color: var(--ink);
+    width: 100%;
+    transition: border-color 0.1s;
+  }
+  .field select:focus, .field input:focus {
+    outline: none;
+    border-color: var(--ember);
+    box-shadow: 0 0 0 2px var(--ember-soft);
+  }
+  .field-with-unit {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    align-items: end;
+  }
+  .field-value {
+    font-family: var(--mono);
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--ember);
+    min-width: 60px;
+    text-align: right;
+    padding-bottom: 8px;
+  }
+
+  /* range slider */
+  .field input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 24px;
+    background: transparent; padding: 0; border: 0;
+    cursor: pointer;
+  }
+  .field input[type="range"]::-webkit-slider-runnable-track {
+    height: 2px; background: var(--ink-faint);
+  }
+  .field input[type="range"]::-moz-range-track {
+    height: 2px; background: var(--ink-faint);
+  }
+  .field input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 18px; height: 18px;
+    background: var(--ember); border: 0; border-radius: 50%;
+    margin-top: -8px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+  }
+  .field input[type="range"]::-moz-range-thumb {
+    width: 18px; height: 18px;
+    background: var(--ember); border: 0; border-radius: 50%;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+  }
+
+  /* radio rows */
+  .radio-row { display: grid; gap: 6px; }
+  .radio-row label {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px;
+    background: var(--paper-card);
+    border: 1px solid var(--rule);
+    cursor: pointer;
+    font-size: 0.95rem;
+    transition: all 0.1s;
+  }
+  .radio-row label:hover { border-color: var(--ink-faint); }
+  .radio-row input[type="radio"] {
+    appearance: none; -webkit-appearance: none;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--ink-faint); border-radius: 50%;
+    margin: 0; flex-shrink: 0;
+    position: relative;
+  }
+  .radio-row input[type="radio"]:checked {
+    border-color: var(--ember);
+  }
+  .radio-row input[type="radio"]:checked::after {
+    content: ''; position: absolute;
+    inset: 3px; border-radius: 50%;
+    background: var(--ember);
+  }
+  .radio-row input[type="radio"]:checked + .label-text { font-weight: 600; }
+  .radio-row label:has(input:checked) {
+    border-color: var(--ember);
+    background: var(--ember-soft);
+  }
+  .label-text .zh {
+    color: var(--ink-faint); font-size: 0.8em; margin-left: 6px;
+  }
+
+  /* ═══ THE VERDICT ═══ */
+  .verdict {
+    margin: 40px 0 0;
+    padding: 28px 24px 24px;
+    background: var(--paper-card);
+    border: 1px solid var(--ink);
+    position: relative;
+  }
+  .verdict::before, .verdict::after {
+    content: '◆';
+    position: absolute;
+    color: var(--ember);
+    font-size: 0.875rem;
+    top: -10px;
+    background: var(--paper);
+    padding: 0 8px;
+  }
+  .verdict::before { left: 24px; }
+  .verdict::after { right: 24px; }
+  .verdict-head {
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.24em;
+    color: var(--ink-soft);
+    margin-bottom: 18px;
+  }
+  .verdict-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 32px;
+    align-items: center;
+  }
+  .verdict-stamp {
+    width: 140px; height: 140px;
+    border: 3px double var(--ink);
+    border-radius: 50%;
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    background: var(--paper);
+    position: relative;
+  }
+  .verdict-stamp .grade {
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 900;
+    font-size: 3.5rem;
+    line-height: 0.9;
+    color: var(--ember);
+  }
+  .verdict-stamp .num {
+    font-family: var(--mono);
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--ink);
+    margin-top: 4px;
+  }
+  .verdict-stamp .total {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.14em;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+  .verdict-bars {
+    display: grid;
+    gap: 8px;
+  }
+  .bar {
+    display: grid;
+    grid-template-columns: 110px 1fr 38px;
+    align-items: center;
+    gap: 12px;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+  }
+  .bar-label {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-soft);
+    font-weight: 600;
+  }
+  .bar-track {
+    height: 6px;
+    background: var(--rule-soft);
+    position: relative;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    background: var(--ember);
+    transition: width 0.3s ease;
+  }
+  .bar[data-tier="green"] .bar-fill { background: var(--sage); }
+  .bar[data-tier="warn"] .bar-fill { background: var(--ember); }
+  .bar[data-tier="fail"] .bar-fill { background: var(--ember-deep); }
+  .bar-value {
+    text-align: right;
+    color: var(--ink);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .bar-value.fail { color: var(--ember-deep); }
+
+  .diagnostics {
+    margin-top: 22px;
+    padding-top: 16px;
+    border-top: 1px dotted var(--rule);
+    display: grid; gap: 6px;
+  }
+  .diag {
+    font-size: 0.875rem;
+    line-height: 1.45;
+    padding-left: 22px;
+    position: relative;
+  }
+  .diag::before {
+    position: absolute; left: 0; top: 0;
+    font-family: var(--mono); font-weight: 700;
+  }
+  .diag[data-tier="red"]    { color: var(--ember-deep); }
+  .diag[data-tier="red"]::before    { content: '⚠'; color: var(--ember-deep); }
+  .diag[data-tier="yellow"] { color: var(--kraft); }
+  .diag[data-tier="yellow"]::before { content: '◐'; color: var(--kraft); }
+  .diag[data-tier="green"]  { color: var(--sage); }
+  .diag[data-tier="green"]::before  { content: '✓'; color: var(--sage); }
+  .diag .zh { color: var(--ink-faint); display: block; font-size: 0.85em; margin-top: 1px; }
+
+  /* ═══ THE SCHEDULE ═══ */
+  .schedule-block { margin-top: 40px; }
+  .schedule-meta {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+    margin-bottom: 14px;
+    line-height: 1.5;
+  }
+  .schedule-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+  .btn {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    padding: 12px 18px;
+    background: var(--paper-card);
+    border: 1px solid var(--ink);
+    border-radius: 0;
+    cursor: pointer;
+    color: var(--ink);
+    min-height: 44px;
+    transition: all 0.1s;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn:hover { background: var(--ink); color: var(--paper); }
+  .btn-primary { background: var(--ember); color: var(--paper); border-color: var(--ember); }
+  .btn-primary:hover { background: var(--ember-deep); border-color: var(--ember-deep); }
+  .btn[hidden] { display: none; }
+
+  .timeline {
+    list-style: none; padding: 0; margin: 0;
+    border-top: 1px dotted var(--rule);
+  }
+  .timeline li {
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    gap: 14px;
+    padding: 14px 0 14px 4px;
+    border-bottom: 1px dotted var(--rule);
+    cursor: pointer;
+    align-items: start;
+  }
+  .timeline li[data-now="true"]  { background: var(--ember-soft); padding-left: 12px; padding-right: 12px; border-left: 3px solid var(--ember); }
+  .timeline li[data-soon="true"] { background: rgba(139, 111, 71, 0.08); padding-left: 12px; padding-right: 12px; }
+  .timeline li[data-past="true"] { opacity: 0.4; }
+  .timeline .clock {
+    font-family: var(--mono);
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    padding-top: 1px;
+  }
+  .timeline li[data-now="true"] .clock { color: var(--ember); }
+  .timeline .body { display: grid; gap: 2px; }
+  .timeline .title { font-family: var(--serif); font-size: 1rem; font-weight: 600; line-height: 1.3; }
+  .timeline .title-zh { display: block; font-size: 0.85rem; color: var(--ink-soft); }
+  .timeline .desc {
+    margin-top: 8px; padding-top: 8px;
+    border-top: 1px dotted var(--rule);
+    color: var(--ink-soft);
+    font-size: 0.875rem;
+    line-height: 1.55;
+    display: none;
+  }
+  .timeline .desc em { font-style: italic; color: var(--ink-faint); display: block; margin-top: 4px; }
+  .timeline li[data-open="true"] .desc { display: block; }
+  .timeline .day-label {
+    grid-column: 1 / -1;
+    font-family: var(--mono); font-size: 0.65rem;
+    text-transform: uppercase; letter-spacing: 0.18em;
+    color: var(--ember);
+    cursor: default;
+    padding: 18px 0 4px;
+    border: 0;
+  }
+  .timeline .now-pill {
+    display: inline-block;
+    font-family: var(--mono); font-size: 0.6rem; font-weight: 800;
+    padding: 1px 6px; margin-left: 6px;
+    background: var(--ember); color: var(--paper);
+    text-transform: uppercase; letter-spacing: 0.12em;
+    vertical-align: middle;
+  }
+
+  /* ═══ Live timer ═══ */
+  .live-status {
+    display: none;
+    position: sticky; top: 0;
+    z-index: 50;
+    margin: -20px -20px 20px;
+    padding: 12px 20px;
+    background: var(--ink);
+    color: var(--paper);
+    font-family: var(--mono); font-size: 0.8rem;
+    text-align: center; letter-spacing: 0.08em;
+  }
+  .live-status.on { display: block; }
+  .live-status .dot {
+    display: inline-block; width: 8px; height: 8px;
+    background: var(--ember); border-radius: 50%;
+    margin-right: 8px; animation: pulse 1.6s infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* ═══ Toast ═══ */
+  .toast {
+    position: fixed; left: 50%; bottom: 24px;
+    transform: translateX(-50%) translateY(100px);
+    background: var(--ink); color: var(--paper);
+    padding: 12px 22px;
+    font-family: var(--mono); font-size: 0.8rem;
+    letter-spacing: 0.04em;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+    transition: transform 0.25s ease;
+    z-index: 200; pointer-events: none;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+
+  /* ═══ Colophon ═══ */
+  .colophon {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 6px double var(--ink);
+    text-align: center;
+    font-family: var(--mono); font-size: 0.7rem;
+    color: var(--ink-soft);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    line-height: 1.7;
+  }
+  .colophon a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--ink-faint); }
+  .colophon a:hover { color: var(--ember); border-bottom-color: var(--ember); }
+  .colophon em { font-style: italic; text-transform: none; letter-spacing: 0; color: var(--ink-faint); display: block; margin-top: 8px; }
+
+  /* ═══ Responsive ═══ */
+  @media (max-width: 720px) {
+    .field-grid { grid-template-columns: 1fr; gap: 14px; }
+    .preset-row { grid-template-columns: repeat(2, 1fr); }
+    .verdict-grid { grid-template-columns: 1fr; gap: 22px; text-align: center; }
+    .verdict-stamp { margin: 0 auto; }
+    .bar { grid-template-columns: 90px 1fr 36px; gap: 8px; }
+  }
+  @media (max-width: 420px) {
+    .almanac { padding: 20px 16px 32px; }
+    .verdict-stamp { width: 120px; height: 120px; }
+    .verdict-stamp .grade { font-size: 2.75rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="live-status" id="live-status">
+  <span class="dot"></span>LIVE — <span id="live-msg">Plan armed</span>
+</div>
+
+<div class="almanac">
+
+  <!-- ═══════════ MASTHEAD ═══════════ -->
+  <header class="masthead">
+    <h1 class="masthead-title">
+      Smoker <em>Almanac</em>
+      <span class="masthead-zh">烟熏年鉴 · No. 1</span>
+    </h1>
+    <div class="masthead-meta">
+      Est. 2026<br>
+      <a href="pitmaster.html">Deep mode →</a>
+    </div>
+  </header>
+
+  <p class="lede">
+    A predictor and a schedule book for fire, meat, and time.
+    <em>Set your variables. The almanac scores the cook and writes the timetable.</em>
+    <span class="zh">为火、肉、时间而设的预测器与日程书。设定变量，年鉴自动打分并写出时间表。</span>
+  </p>
+
+  <!-- ═══════════ Quick presets ═══════════ -->
+  <section class="section" style="border-top: 0; padding-top: 0; margin-top: 0;">
+    <div class="section-head">
+      <span class="num">⊕</span>
+      <h2>Quick start <span class="zh">快速预设</span></h2>
+    </div>
+    <hr class="section-rule">
+    <div class="preset-row" id="preset-row" role="radiogroup" aria-label="Quick preset"></div>
+  </section>
+
+  <!-- ═══════════ I — THE CUT ═══════════ -->
+  <section class="section">
+    <div class="section-head">
+      <span class="num">I.</span>
+      <h2>The cut <span class="zh">·肉</span></h2>
+    </div>
+    <hr class="section-rule">
+    <div class="field-grid">
+      <div class="field">
+        <label class="field-label" for="meat">Meat <span class="zh">肉品</span></label>
+        <select id="meat"></select>
+      </div>
+      <div class="field">
+        <label class="field-label" for="grade">Grade <span class="zh">分级</span></label>
+        <select id="grade">
+          <option value="select">Select</option>
+          <option value="choice">Choice</option>
+          <option value="prime">Prime</option>
+          <option value="wagyu">Wagyu</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="field-label" for="weight">Weight <span class="zh">重量</span></label>
+        <div class="field-with-unit">
+          <input type="range" id="weight" min="0.3" max="8" step="0.1" value="4.5">
+          <span class="field-value"><span id="weight-val">4.5</span> kg</span>
+        </div>
+      </div>
+      <div class="field">
+        <label class="field-label" for="thickness">Thickness <span class="zh">厚度</span></label>
+        <div class="field-with-unit">
+          <input type="range" id="thickness" min="2" max="14" step="0.5" value="7">
+          <span class="field-value"><span id="thickness-val">7</span> cm</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ II — THE FIRE ═══════════ -->
+  <section class="section">
+    <div class="section-head">
+      <span class="num">II.</span>
+      <h2>The fire <span class="zh">·火</span></h2>
+    </div>
+    <hr class="section-rule">
+    <div class="field-grid">
+      <div class="field">
+        <label class="field-label" for="equipment">Equipment <span class="zh">设备</span></label>
+        <select id="equipment"></select>
+      </div>
+      <div class="field">
+        <label class="field-label" for="pit">Pit temp <span class="zh">桶温</span></label>
+        <div class="field-with-unit">
+          <input type="range" id="pit" min="80" max="260" step="5" value="121">
+          <span class="field-value"><span id="pit-val">121</span>°C / <span id="pit-val-f">250</span>°F</span>
+        </div>
+      </div>
+      <div class="field">
+        <label class="field-label" for="wood">Smoke wood <span class="zh">烟木</span></label>
+        <select id="wood"></select>
+      </div>
+      <div class="field">
+        <label class="field-label" for="wood-amt">Wood amount <span class="zh">用量（块）</span></label>
+        <div class="field-with-unit">
+          <input type="range" id="wood-amt" min="0" max="5" step="1" value="2">
+          <span class="field-value"><span id="wood-amt-val">2</span> chunks</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ III — THE WRAP ═══════════ -->
+  <section class="section">
+    <div class="section-head">
+      <span class="num">III.</span>
+      <h2>The wrap &amp; pull <span class="zh">·包与出炉</span></h2>
+    </div>
+    <hr class="section-rule">
+    <div class="field-grid">
+      <div class="field">
+        <label class="field-label">Wrap <span class="zh">包裹</span></label>
+        <div class="radio-row" id="wrap-row"></div>
+      </div>
+      <div class="field">
+        <label class="field-label" for="pull">Pull temp (internal) <span class="zh">出炉中心温度</span></label>
+        <div class="field-with-unit">
+          <input type="range" id="pull" min="50" max="100" step="1" value="95">
+          <span class="field-value"><span id="pull-val">95</span>°C / <span id="pull-val-f">203</span>°F</span>
+        </div>
+        <div style="font-family: var(--mono); font-size: 0.7rem; color: var(--ink-faint); margin-top: 4px;">
+          Ideal range: <span id="ideal-range">93–96°C</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ IV — THE REST ═══════════ -->
+  <section class="section">
+    <div class="section-head">
+      <span class="num">IV.</span>
+      <h2>The rest <span class="zh">·静置</span></h2>
+    </div>
+    <hr class="section-rule">
+    <div class="field-grid">
+      <div class="field">
+        <label class="field-label">Method <span class="zh">方式</span></label>
+        <div class="radio-row" id="rest-row"></div>
+      </div>
+      <div class="field">
+        <label class="field-label" for="rest-min">Duration <span class="zh">时长</span></label>
+        <div class="field-with-unit">
+          <input type="range" id="rest-min" min="0" max="240" step="5" value="60">
+          <span class="field-value"><span id="rest-min-val">60</span> min</span>
+        </div>
+        <div style="font-family: var(--mono); font-size: 0.7rem; color: var(--ink-faint); margin-top: 4px;">
+          τ_rest = 45 min · juice rebound full at ~90 min
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ THE VERDICT ═══════════ -->
+  <div class="verdict" id="verdict">
+    <div class="verdict-head">⊕ The verdict · 评判 ⊕</div>
+    <div class="verdict-grid">
+      <div class="verdict-stamp">
+        <span class="grade" id="grade-letter">—</span>
+        <span class="num" id="grade-num">—</span>
+        <span class="total">/ 100 pts</span>
+      </div>
+      <div class="verdict-bars" id="bars"></div>
+    </div>
+    <div class="diagnostics" id="diagnostics"></div>
+  </div>
+
+  <!-- ═══════════ THE SCHEDULE ═══════════ -->
+  <section class="section schedule-block">
+    <div class="section-head">
+      <span class="num">⏱</span>
+      <h2>The schedule <span class="zh">·时间表</span></h2>
+    </div>
+    <hr class="section-rule">
+
+    <div class="field-grid" style="margin-bottom: 18px;">
+      <div class="field">
+        <label class="field-label" for="serve-at">Serving at <span class="zh">上桌时间</span></label>
+        <input type="datetime-local" id="serve-at">
+      </div>
+      <div class="field">
+        <label class="field-label">&nbsp;</label>
+        <div class="schedule-meta" id="schedule-meta"></div>
+      </div>
+    </div>
+
+    <div class="schedule-actions">
+      <button type="button" id="btn-ics"   class="btn btn-primary">📥 Calendar · 日历</button>
+      <button type="button" id="btn-text"  class="btn">📋 Text · 文本</button>
+      <button type="button" id="btn-share" class="btn" hidden>🔗 Share · 分享</button>
+      <button type="button" id="btn-live"  class="btn">🔔 Live timer · 实时提醒</button>
+    </div>
+
+    <ol class="timeline" id="timeline"></ol>
+  </section>
+
+  <footer class="colophon">
+    Smoker Almanac · No. 1 · Est. 2026 · MIT
+    &nbsp;·&nbsp;
+    <a href="pitmaster.html">Deep mode</a>
+    &nbsp;·&nbsp;
+    <a href="https://github.com/djzoom/BBQ-Master">GitHub</a>
+    <em>Decisions, not dials. 决策胜过仪表。</em>
+  </footer>
+
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="js/menuLibrary.js"></script>
+<script src="js/qualityModel.js"></script>
+<script src="js/icsGenerator.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var Q    = window.SmokerSim.Quality;
+  var Menu = window.SmokerSim.Menu;
+  var ICS  = window.SmokerSim.ICS;
+
+  // ─── Preset → meat mapping ──────────────────────────────────────
+  // When user picks a quick preset, we apply both: (a) the calc inputs
+  // for the matching meat, (b) the hand-tuned schedule from menuLibrary.
+  var PRESET_MEAT = {
+    'skewers':         null,            // no Q meat — uses menuLib schedule
+    'wings':           'wings',
+    'pork-belly':      'pork-belly',
+    'brisket-picanha': 'brisket'        // brisket is primary meat in that combo
+  };
+
+  // ─── DOM refs ───────────────────────────────────────────────────
+  var $ = function (id) { return document.getElementById(id); };
+  var meatSel = $('meat');
+  var gradeSel = $('grade');
+  var weightR = $('weight');
+  var thickR  = $('thickness');
+  var equipSel = $('equipment');
+  var pitR    = $('pit');
+  var woodSel = $('wood');
+  var woodAmtR = $('wood-amt');
+  var pullR   = $('pull');
+  var restMinR = $('rest-min');
+  var serveInput = $('serve-at');
+  var presetRow = $('preset-row');
+  var wrapRow = $('wrap-row');
+  var restRow = $('rest-row');
+  var liveStatus = $('live-status');
+  var toast = $('toast');
+
+  var state = {
+    presetId: null,           // active menuLibrary preset, if any
+    cfg: {                    // calculator inputs
+      meat: 'brisket',
+      weightKg: 4.5,
+      thicknessCm: 7,
+      grade: 'choice',
+      equipment: 'drum',
+      pitC: 121,
+      wrap: 'butcher_paper',
+      smokeWood: 'oak',
+      smokeAmount: 2,
+      pullC: 95,
+      restMethod: 'cooler',
+      restMin: 60
+    },
+    serveAt: null,
+    liveTimer: null,
+    notifyAllowed: false,
+    firedNotifications: {}
+  };
+
+  // ─── Helpers ────────────────────────────────────────────────────
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function fToC(f) { return (f - 32) * 5 / 9; }
+  function cToF(c) { return c * 9 / 5 + 32; }
+  function localInputValue(d) {
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+      + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(function () { toast.classList.remove('show'); }, 1800);
+  }
+
+  // ─── Populate selects + radio rows ──────────────────────────────
+  function populateMeats() {
+    meatSel.innerHTML = Q.MEAT_ORDER.map(function (id) {
+      var m = Q.MEATS[id];
+      return '<option value="' + id + '">' + m.label + ' · ' + m.label_zh + '</option>';
+    }).join('');
+  }
+  function populateEquipment() {
+    equipSel.innerHTML = Q.EQUIPMENT_ORDER.map(function (id) {
+      var e = Q.EQUIPMENT[id];
+      return '<option value="' + id + '">' + e.label + ' · ' + e.label_zh + '</option>';
+    }).join('');
+  }
+  function populateWoods() {
+    woodSel.innerHTML = Object.keys(Q.WOODS).map(function (id) {
+      var w = Q.WOODS[id];
+      return '<option value="' + id + '">' + w.label + ' · ' + w.label_zh + '</option>';
+    }).join('');
+  }
+  function populateWraps() {
+    wrapRow.innerHTML = Object.keys(Q.WRAPS).map(function (id, i) {
+      var w = Q.WRAPS[id];
+      return '<label><input type="radio" name="wrap" value="' + id + '"' + (i === 1 ? ' checked' : '') + '>'
+        + '<span class="label-text">' + w.label + '<span class="zh">' + w.label_zh + '</span></span></label>';
+    }).join('');
+    Array.prototype.forEach.call(wrapRow.querySelectorAll('input'), function (r) {
+      r.addEventListener('change', function () { state.cfg.wrap = r.value; recompute(); });
+    });
+  }
+  function populateRest() {
+    restRow.innerHTML = Object.keys(Q.REST).map(function (id, i) {
+      var r = Q.REST[id];
+      return '<label><input type="radio" name="rest" value="' + id + '"' + (i === 2 ? ' checked' : '') + '>'
+        + '<span class="label-text">' + r.label + '<span class="zh">' + r.label_zh + '</span></span></label>';
+    }).join('');
+    Array.prototype.forEach.call(restRow.querySelectorAll('input'), function (r) {
+      r.addEventListener('change', function () { state.cfg.restMethod = r.value; recompute(); });
+    });
+  }
+  function populatePresets() {
+    presetRow.innerHTML = Menu.list().map(function (tpl) {
+      return '<button type="button" class="preset-chip" data-id="' + tpl.id + '" '
+        + 'role="radio" aria-pressed="false">'
+        + '<span class="icon">' + tpl.icon + '</span>'
+        + '<span class="name">' + tpl.name + '<span class="zh">' + tpl.name_zh + '</span></span>'
+        + '</button>';
+    }).join('');
+    Array.prototype.forEach.call(presetRow.querySelectorAll('.preset-chip'), function (chip) {
+      chip.addEventListener('click', function () { applyPreset(chip.dataset.id); });
+    });
+  }
+
+  // ─── Apply preset → fill calculator inputs ──────────────────────
+  function applyPreset(presetId) {
+    state.presetId = presetId;
+    Array.prototype.forEach.call(presetRow.querySelectorAll('.preset-chip'), function (c) {
+      c.setAttribute('aria-pressed', c.dataset.id === presetId ? 'true' : 'false');
+    });
+    var meatKey = PRESET_MEAT[presetId];
+    if (meatKey && Q.MEATS[meatKey]) {
+      var m = Q.MEATS[meatKey];
+      state.cfg.meat = meatKey;
+      state.cfg.weightKg = m.defaultWeightKg;
+      state.cfg.thicknessCm = m.defaultThicknessCm;
+      state.cfg.pitC = m.defaultPitC;
+      state.cfg.pullC = m.defaultPullC;
+      state.cfg.grade = m.grade;
+      state.cfg.wrap = m.collagenStyle ? 'butcher_paper' : 'none';
+      state.cfg.smokeWood = m.collagenStyle ? 'oak' : 'cherry';
+      state.cfg.smokeAmount = m.collagenStyle ? 2 : 1;
+      state.cfg.restMethod = m.collagenStyle ? 'cooler' : 'open_air';
+      state.cfg.restMin = m.collagenStyle ? 60 : 10;
+      writeInputsFromState();
+    }
+    syncURL();
+    recompute();
+  }
+
+  function clearPreset() {
+    state.presetId = null;
+    Array.prototype.forEach.call(presetRow.querySelectorAll('.preset-chip'), function (c) {
+      c.setAttribute('aria-pressed', 'false');
+    });
+  }
+
+  // ─── State ↔ inputs ─────────────────────────────────────────────
+  function writeInputsFromState() {
+    meatSel.value = state.cfg.meat;
+    gradeSel.value = state.cfg.grade;
+    weightR.value = state.cfg.weightKg; $('weight-val').textContent = state.cfg.weightKg;
+    thickR.value  = state.cfg.thicknessCm; $('thickness-val').textContent = state.cfg.thicknessCm;
+    equipSel.value = state.cfg.equipment;
+    pitR.value = state.cfg.pitC; $('pit-val').textContent = state.cfg.pitC; $('pit-val-f').textContent = Math.round(cToF(state.cfg.pitC));
+    woodSel.value = state.cfg.smokeWood;
+    woodAmtR.value = state.cfg.smokeAmount; $('wood-amt-val').textContent = state.cfg.smokeAmount;
+    pullR.value = state.cfg.pullC; $('pull-val').textContent = state.cfg.pullC; $('pull-val-f').textContent = Math.round(cToF(state.cfg.pullC));
+    restMinR.value = state.cfg.restMin; $('rest-min-val').textContent = state.cfg.restMin;
+    Array.prototype.forEach.call(wrapRow.querySelectorAll('input'), function (r) { r.checked = (r.value === state.cfg.wrap); });
+    Array.prototype.forEach.call(restRow.querySelectorAll('input'), function (r) { r.checked = (r.value === state.cfg.restMethod); });
+    var meat = Q.MEATS[state.cfg.meat];
+    $('ideal-range').textContent = meat.pullIdealC[0] + '–' + meat.pullIdealC[1] + '°C / '
+      + Math.round(cToF(meat.pullIdealC[0])) + '–' + Math.round(cToF(meat.pullIdealC[1])) + '°F';
+  }
+
+  // ─── Compute + render ───────────────────────────────────────────
+  function recompute() {
+    var result = Q.score(state.cfg);
+
+    // Verdict stamp + bars
+    $('grade-letter').textContent = result.grade;
+    $('grade-num').textContent = result.scores.overall;
+
+    var bars = [
+      { key: 'tenderness', label: 'TENDERNESS', label_zh: '嫩度' },
+      { key: 'juiciness',  label: 'JUICINESS',  label_zh: '多汁' },
+      { key: 'smoke',      label: 'SMOKE',      label_zh: '烟味' },
+      { key: 'doneness',   label: 'DONENESS',   label_zh: '熟度' },
+      { key: 'safety',     label: 'SAFETY',     label_zh: '安全' }
+    ];
+    $('bars').innerHTML = bars.map(function (b) {
+      var v = result.scores[b.key];
+      var tier = v >= 85 ? 'green' : v >= 60 ? 'warn' : 'fail';
+      var display = b.key === 'safety' ? (v === 0 ? 'FAIL' : 'PASS') : v;
+      return '<div class="bar" data-tier="' + tier + '">'
+        + '<span class="bar-label">' + b.label + '</span>'
+        + '<div class="bar-track"><div class="bar-fill" style="width: ' + v + '%"></div></div>'
+        + '<span class="bar-value' + (v === 0 ? ' fail' : '') + '">' + display + '</span>'
+        + '</div>';
+    }).join('');
+
+    // Diagnostics
+    $('diagnostics').innerHTML = result.diagnostics.map(function (d) {
+      return '<div class="diag" data-tier="' + d.tier + '">' + d.msg
+        + '<span class="zh">' + d.msg_zh + '</span></div>';
+    }).join('');
+
+    renderSchedule(result);
+  }
+
+  // ─── Schedule ──────────────────────────────────────────────────
+  function getScheduleSource(scoreResult) {
+    // Preset takes priority; otherwise generic from cookHr
+    if (state.presetId) {
+      return state.presetId;
+    }
+    var meat = Q.MEATS[state.cfg.meat];
+    return {
+      id: 'custom-' + state.cfg.meat,
+      icon: '🥩',
+      name: meat.label + ' (custom)',
+      name_zh: meat.label_zh + '（自定义）',
+      schedule: Q.buildGenericSchedule(state.cfg, scoreResult.cookHours)
+    };
+  }
+
+  function renderSchedule(scoreResult) {
+    if (!state.serveAt) return;
+    var source = getScheduleSource(scoreResult);
+    var events = ICS.buildEvents(state.serveAt, source);
+    if (events.length === 0) return;
+
+    var startTime = events[0].clock + ' · ' + events[0].day;
+    var totalMin = (state.serveAt.getTime() - events[0].start.getTime()) / 60000;
+    var totalDisp = totalMin >= 60 ? (totalMin / 60).toFixed(totalMin < 180 ? 1 : 0) + ' h'
+                                   : Math.round(totalMin) + ' min';
+    $('schedule-meta').innerHTML = 'Cook starts <strong>' + startTime + '</strong><br>'
+      + events.length + ' steps · ' + totalDisp + ' total<br>'
+      + 'Predicted score: <strong>' + scoreResult.grade + '</strong> (' + scoreResult.scores.overall + ')';
+
+    var now = Date.now();
+    var nowFound = false;
+    var lastDay = null;
+    var html = '';
+    events.forEach(function (e) {
+      if (e.day !== lastDay) {
+        html += '<li class="day-label">— ' + e.day + ' —</li>';
+        lastDay = e.day;
+      }
+      var startMs = e.start.getTime();
+      var endMs = e.end.getTime();
+      var isPast = endMs < now;
+      var isNow = !nowFound && now >= startMs && now <= endMs;
+      var isSoon = !nowFound && !isNow && (startMs - now) < 30 * 60000 && startMs > now;
+      if (isNow) nowFound = true;
+      var attrs = '';
+      if (isPast) attrs += ' data-past="true"';
+      if (isNow) attrs += ' data-now="true"';
+      if (isSoon) attrs += ' data-soon="true"';
+      html += '<li' + attrs + '>'
+        + '<div class="clock">' + e.clock + '</div>'
+        + '<div class="body">'
+        +   '<div class="title">' + e.title + (isNow ? ' <span class="now-pill">Now</span>' : '') + '</div>'
+        +   '<span class="title-zh">' + e.title_zh + '</span>'
+        +   '<div class="desc">' + e.body + '<br><em>' + e.body_zh + '</em></div>'
+        + '</div></li>';
+    });
+    $('timeline').innerHTML = html;
+    Array.prototype.forEach.call($('timeline').querySelectorAll('li:not(.day-label)'), function (li) {
+      li.addEventListener('click', function () {
+        li.setAttribute('data-open', li.getAttribute('data-open') === 'true' ? 'false' : 'true');
+      });
+    });
+  }
+
+  // ─── URL state ─────────────────────────────────────────────────
+  function syncURL() {
+    var params = new URLSearchParams();
+    if (state.presetId) params.set('preset', state.presetId);
+    params.set('meat', state.cfg.meat);
+    params.set('w', state.cfg.weightKg);
+    params.set('pit', state.cfg.pitC);
+    params.set('pull', state.cfg.pullC);
+    params.set('wrap', state.cfg.wrap);
+    if (serveInput.value) params.set('serve', serveInput.value);
+    history.replaceState(null, '', location.pathname + '?' + params.toString());
+  }
+
+  // ─── Calendar / text / share ───────────────────────────────────
+  function downloadICS() {
+    if (!state.serveAt) { showToast('Pick a serve time'); return; }
+    var result = Q.score(state.cfg);
+    var source = getScheduleSource(result);
+    var ics = ICS.buildICS(state.serveAt, source);
+    var blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'bbq-' + state.cfg.meat + '-' + state.serveAt.toISOString().slice(0, 10) + '.ics';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    showToast('Calendar downloaded · 已下载');
+  }
+
+  function copyText() {
+    if (!state.serveAt) { showToast('Pick a serve time'); return; }
+    var result = Q.score(state.cfg);
+    var source = getScheduleSource(result);
+    var text = ICS.buildText(state.serveAt, source);
+    text = '⊕ Predicted ' + result.grade + ' (' + result.scores.overall + '/100)\n\n' + text;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { showToast('Copied · 已复制'); },
+        function () { showToast('Copy failed'); }
+      );
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); showToast('Copied · 已复制'); }
+      catch (e) { showToast('Copy failed'); }
+      ta.remove();
+    }
+  }
+
+  function shareLink() {
+    var url = location.origin + location.pathname + location.search;
+    if (navigator.share) {
+      navigator.share({ title: 'BBQ Schedule', url: url }).catch(function () {});
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(function () { showToast('Link copied · 链接已复制'); });
+    }
+  }
+
+  // ─── Live timer ────────────────────────────────────────────────
+  function toggleLiveTimer() {
+    if (state.liveTimer) {
+      clearInterval(state.liveTimer); state.liveTimer = null;
+      liveStatus.classList.remove('on');
+      $('btn-live').textContent = '🔔 Live timer · 实时提醒';
+      showToast('Live timer off · 关闭');
+      return;
+    }
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().then(function (perm) {
+        state.notifyAllowed = (perm === 'granted');
+        if (!state.notifyAllowed) showToast('Browser notifications denied · 浏览器通知被拒');
+        startLiveTimer();
+      });
+    } else {
+      state.notifyAllowed = ('Notification' in window && Notification.permission === 'granted');
+      startLiveTimer();
+    }
+  }
+
+  function startLiveTimer() {
+    if (!state.serveAt) { showToast('Pick a serve time first'); return; }
+    state.liveTimer = setInterval(tickLiveTimer, 30000);
+    tickLiveTimer();
+    liveStatus.classList.add('on');
+    $('btn-live').textContent = '🔔 Stop timer · 停止';
+    showToast('Live timer on · 已开启');
+  }
+
+  function tickLiveTimer() {
+    if (!state.serveAt) return;
+    var result = Q.score(state.cfg);
+    var source = getScheduleSource(result);
+    var events = ICS.buildEvents(state.serveAt, source);
+    var now = Date.now();
+    var current = null, next = null;
+    for (var i = 0; i < events.length; i++) {
+      var e = events[i];
+      if (now >= e.start.getTime() && now < e.end.getTime()) { current = e; if (i + 1 < events.length) next = events[i + 1]; break; }
+      if (e.start.getTime() > now) { next = e; break; }
+    }
+    var msg;
+    if (current) msg = 'NOW: ' + current.title;
+    else if (next) {
+      var minsAway = Math.round((next.start.getTime() - now) / 60000);
+      msg = 'NEXT in ' + minsAway + ' min: ' + next.title;
+    }
+    else msg = 'All steps complete';
+    $('live-msg').textContent = msg;
+
+    // Fire notification at start of each step (once)
+    if (next) {
+      var startMs = next.start.getTime();
+      var diffMs = startMs - now;
+      if (diffMs > 0 && diffMs < 60000 && !state.firedNotifications[next.index]) {
+        state.firedNotifications[next.index] = true;
+        if (state.notifyAllowed) {
+          new Notification('BBQ · ' + next.title, {
+            body: next.title_zh + (next.body ? '\n\n' + next.body : ''),
+            icon: 'assets/favicon.svg',
+            tag: 'bbq-' + next.index
+          });
+        }
+      }
+    }
+    renderSchedule(result);  // update "NOW" highlight
+  }
+
+  // ─── Wire inputs ────────────────────────────────────────────────
+  function wireInputs() {
+    meatSel.addEventListener('change', function () {
+      state.cfg.meat = meatSel.value;
+      var m = Q.MEATS[state.cfg.meat];
+      // Update defaults that scale with meat type
+      state.cfg.weightKg = m.defaultWeightKg;
+      state.cfg.thicknessCm = m.defaultThicknessCm;
+      state.cfg.pitC = m.defaultPitC;
+      state.cfg.pullC = m.defaultPullC;
+      writeInputsFromState();
+      clearPreset();
+      syncURL(); recompute();
+    });
+    gradeSel.addEventListener('change', function () { state.cfg.grade = gradeSel.value; clearPreset(); syncURL(); recompute(); });
+    weightR.addEventListener('input', function () {
+      state.cfg.weightKg = parseFloat(weightR.value);
+      $('weight-val').textContent = weightR.value;
+      clearPreset(); syncURL(); recompute();
+    });
+    thickR.addEventListener('input', function () {
+      state.cfg.thicknessCm = parseFloat(thickR.value);
+      $('thickness-val').textContent = thickR.value;
+      clearPreset(); recompute();
+    });
+    equipSel.addEventListener('change', function () { state.cfg.equipment = equipSel.value; clearPreset(); recompute(); });
+    pitR.addEventListener('input', function () {
+      state.cfg.pitC = parseInt(pitR.value, 10);
+      $('pit-val').textContent = pitR.value;
+      $('pit-val-f').textContent = Math.round(cToF(parseInt(pitR.value, 10)));
+      clearPreset(); syncURL(); recompute();
+    });
+    woodSel.addEventListener('change', function () { state.cfg.smokeWood = woodSel.value; clearPreset(); recompute(); });
+    woodAmtR.addEventListener('input', function () {
+      state.cfg.smokeAmount = parseInt(woodAmtR.value, 10);
+      $('wood-amt-val').textContent = woodAmtR.value;
+      clearPreset(); recompute();
+    });
+    pullR.addEventListener('input', function () {
+      state.cfg.pullC = parseInt(pullR.value, 10);
+      $('pull-val').textContent = pullR.value;
+      $('pull-val-f').textContent = Math.round(cToF(parseInt(pullR.value, 10)));
+      clearPreset(); syncURL(); recompute();
+    });
+    restMinR.addEventListener('input', function () {
+      state.cfg.restMin = parseInt(restMinR.value, 10);
+      $('rest-min-val').textContent = restMinR.value;
+      clearPreset(); recompute();
+    });
+    serveInput.addEventListener('change', function () {
+      state.serveAt = serveInput.value ? new Date(serveInput.value) : null;
+      syncURL(); recompute();
+    });
+    serveInput.addEventListener('input', function () {
+      state.serveAt = serveInput.value ? new Date(serveInput.value) : null;
+    });
+
+    $('btn-ics').addEventListener('click', downloadICS);
+    $('btn-text').addEventListener('click', copyText);
+    $('btn-share').addEventListener('click', shareLink);
+    $('btn-live').addEventListener('click', toggleLiveTimer);
+
+    if (navigator.share || (navigator.clipboard && navigator.clipboard.writeText)) {
+      $('btn-share').hidden = false;
+    }
+  }
+
+  // ─── Init ───────────────────────────────────────────────────────
+  function defaultServe() {
+    var d = new Date();
+    var hr = d.getHours();
+    if (hr >= 12) d.setDate(d.getDate() + 1);
+    d.setHours(18, 30, 0, 0);
+    return d;
+  }
+
+  function init() {
+    populatePresets();
+    populateMeats();
+    populateEquipment();
+    populateWoods();
+    populateWraps();
+    populateRest();
+
+    var params = new URLSearchParams(location.search);
+    var meatParam = params.get('meat');
+    var presetParam = params.get('preset');
+    var serveParam = params.get('serve');
+
+    if (presetParam && Menu.get(presetParam)) {
+      applyPreset(presetParam);
+    } else if (meatParam && Q.MEATS[meatParam]) {
+      state.cfg.meat = meatParam;
+      var m = Q.MEATS[meatParam];
+      state.cfg.weightKg = m.defaultWeightKg;
+      state.cfg.thicknessCm = m.defaultThicknessCm;
+      state.cfg.pitC = m.defaultPitC;
+      state.cfg.pullC = m.defaultPullC;
+      state.cfg.wrap = m.collagenStyle ? 'butcher_paper' : 'none';
+      state.cfg.smokeWood = m.collagenStyle ? 'oak' : 'cherry';
+      state.cfg.smokeAmount = m.collagenStyle ? 2 : 1;
+      state.cfg.restMethod = m.collagenStyle ? 'cooler' : 'open_air';
+      state.cfg.restMin = m.collagenStyle ? 60 : 10;
+    }
+
+    state.serveAt = serveParam ? new Date(serveParam) : defaultServe();
+    serveInput.value = localInputValue(state.serveAt);
+
+    writeInputsFromState();
+    wireInputs();
+    recompute();
+  }
+
+  init();
+})();
+</script>
+
+</body>
+</html>
