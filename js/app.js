@@ -1,12 +1,6 @@
 /**
- * Smoker Dynamics — plan-mode timeline workbench.
- *
- * Source of truth: view.events — a sorted list of planned events.
- * Anything that mutates events (dock click / drag / chip removal /
- * preset reset / horizon change) calls replayCook(), which:
- *   1. Creates a fresh sim state from preset.inputs
- *   2. Replays events in time order, stepping the physics each minute
- *   3. Returns samples + final state, which the UI renders
+ * Smoker Dynamics — plan-mode timeline workbench (UI controller).
+ * All state mutation goes through replayCook().
  */
 (function () {
   'use strict';
@@ -40,21 +34,11 @@
   ];
 
   var view = {
-    presetId: 'texas',
-    preset: null,
-    sim: null,
-    events: [],
-    cursorMin: 0,
-    horizonMin: 720,
-    overrides: {
-      tAmbF: 70, weightLb: 12, tPitInitF: 70, tMeatInitF: 40,
-      tStartMin: 5 * 60 + 30
-    },
-    samples: [],
-    timelineChart: null,
-    scoreChart: null,
-    replayPending: false,
-    history: [],
+    presetId: 'texas', preset: null, sim: null,
+    events: [], cursorMin: 0, horizonMin: 720,
+    overrides: { tAmbF: 70, weightLb: 12, tPitInitF: 70, tMeatInitF: 40, tStartMin: 5*60+30 },
+    samples: [], timelineChart: null, scoreChart: null,
+    replayPending: false, history: [],
     lang: (function () { try { return localStorage.getItem('smoker.lang') || 'zh'; } catch (e) { return 'zh'; } })()
   };
 
@@ -91,39 +75,29 @@
     var n = s.T.length - 1;
     var coreF = Math.round(C.cToF(s.T[n]));
     var pitF  = Math.round(C.cToF(s.tPitC));
+    var burn  = s.burnLevel || 0;
+
+    // Active intervention: when burn is high, override phase suggestion
+    if (burn > 0.4) {
+      return lang === 'zh'
+        ? { v: '⚠️ 肉被烤坏了。决策锁定。', w: '热损伤积分 ' + Math.round(burn*100) + '%。Bark 炭化、肉汁损失。下次 cook 请：关风门 -20、减炭、包锡纸。', c: '烧坏' }
+        : { v: '⚠️ Cook is burnt past recovery.', w: 'Thermal abuse ' + Math.round(burn*100) + '%. Bark turns to charcoal, juices lost. Next time: close damper -20, fewer coals, foil-wrap.', c: 'Burnt' };
+    }
+    if (pitF > 380) {
+      return lang === 'zh'
+        ? { v: '⚠️ Pit 过热。闭风门 -20。', w: '当前 ' + pitF + '°F 远超低渡区。继续会烧表面、热损伤积分。立刻关风门 + 别再加炭。', c: '警告' }
+        : { v: '⚠️ Pit dangerously hot.', w: 'At ' + pitF + '°F, well past low-and-slow. Bark will scorch and burn locks in. Close damper now and stop adding fuel.', c: 'Warning' };
+    }
+
     var msgs = {
-      startup: {
-        zh: { v: '点 +8 预热启动炉子。', w: '8 块备长炭在桶式炉里峰值约 240°F，足够低温慢烤。空炉热惯性需要 30-40 分钟才稳态。', c: '初始' },
-        en: { v: 'Light +8 to preheat.', w: '8 binchotan pieces peak around 240°F in a drum smoker. Empty pit needs ~30-40 min to stabilize.', c: 'Pre-cook' }
-      },
-      light: {
-        zh: { v: '等炉温到 230-260°F 再上肉。', w: '当前 pit ' + pitF + '°F，正在升温。冷肉下锅会拉低 30-40°F。', c: '引火期' },
-        en: { v: 'Wait until pit hits 230-260°F before adding meat.', w: 'Pit at ' + pitF + '°F, climbing. Cold meat will pull pit down 30-40°F when added.', c: 'Lighting' }
-      },
-      stable: {
-        zh: { v: '炉子稳了，可以放肉。烟木现在塞进去最好。', w: 'Pit ' + pitF + '°F 在烟稳区。Smoke ring 在表面 < 60°C 的前 90 分钟最容易吸收。', c: '稳态' },
-        en: { v: 'Pit is stable. Add meat now and load smoke wood.', w: 'Pit at ' + pitF + '°F in the clean-smoke band. Smoke ring forms best while surface < 60°C in the first 90 min.', c: 'Stable' }
-      },
-      bark: {
-        zh: { v: '盯紧 meat 温度，stall 即将到来。', w: 'Meat 现在 ' + coreF + '°F，到 148°F 会开始 stall plateau。趁现在让烟入味、树皮成形。', c: '树皮期' },
-        en: { v: 'Bark is forming. Watch for stall starting around 148°F.', w: 'Meat at ' + coreF + '°F. Wet-bulb evap will plateau the temp soon — let smoke and crust build now.', c: 'Bark phase' }
-      },
-      stall: {
-        zh: { v: '建议包届夫纸推过 stall。', w: 'Meat 卡在 ' + coreF + '°F，蒸发吸热占主导。包纸早约 2 小时完成，bark 略软（−8 分），juicy +6 分。', c: '建议' },
-        en: { v: 'Wrap in butcher paper to push through the stall.', w: 'Meat plateaued at ' + coreF + '°F. Evap is winning. Wrapping cuts ~2 h off finish; bark softens slightly.', c: 'Stall action' }
-      },
-      push: {
-        zh: { v: '继续等到 200-205°F 探针滑入。', w: 'Meat 现在 ' + coreF + '°F，再升 ' + Math.max(0, 203 - coreF) + '°F 就能 probe-tender。约 1-2 小时。', c: '冲温期' },
-        en: { v: 'Hold steady until 200-205°F and probe-tender.', w: 'Meat at ' + coreF + '°F, ~' + Math.max(0, 203 - coreF) + '°F to go. About 1-2 h.', c: 'Push phase' }
-      },
-      finish: {
-        zh: { v: '出炉，铝箔包静置 1 小时。', w: 'Collagen 已转化 ' + Math.round((s.C || 0) * 100) + '%，meat ' + coreF + '°F。静置让肉汁回流。', c: '出炉' },
-        en: { v: 'Pull and rest in foil for 1 h.', w: 'Collagen ' + Math.round((s.C || 0) * 100) + '% converted, meat ' + coreF + '°F. Rest lets juices redistribute.', c: 'Done' }
-      },
-      rest: {
-        zh: { v: '静置中，等到吃饭时间切片。', w: '保温箱 60-71°C，每多 15 分钟肉汁多保留约 3%。', c: '静置' },
-        en: { v: 'Resting. Slice at serving time.', w: 'Hold at 60-71°C. Each extra 15 min retains ~3% more juice.', c: 'Resting' }
-      }
+      startup: { zh:{v:'点 +8 预热启动炉子。',w:'8 块备长炭在桶式炉里峰值约 240°F。空炉热惯性需 30 分钟所以稳态。',c:'初始'}, en:{v:'Light +8 to preheat.',w:'8 binchotan pieces peak around 240°F. Empty pit needs ~30 min to stabilize.',c:'Pre-cook'} },
+      light:   { zh:{v:'等炉温到 230-260°F 再上肉。',w:'当前 pit ' + pitF + '°F，正在升温。冷肉下锅会拉低 30-40°F。',c:'引火期'}, en:{v:'Wait until pit hits 230-260°F.',w:'Pit at ' + pitF + '°F, climbing. Cold meat will pull pit down 30-40°F.',c:'Lighting'} },
+      stable:  { zh:{v:'炉子稳了，可以放肉。烟木现在塞进去最好。',w:'Pit ' + pitF + '°F 在烟稳区。Smoke ring 在表面 < 60°C 的前 90 分钟最容易吸收。',c:'稳态'}, en:{v:'Pit is stable. Add meat now and load smoke wood.',w:'Pit at ' + pitF + '°F in clean-smoke band. Smoke ring forms best while surface < 60°C in the first 90 min.',c:'Stable'} },
+      bark:    { zh:{v:'盯紧 meat 温度，stall 即将到来。',w:'Meat 现在 ' + coreF + '°F，到 148°F 会开始 stall plateau。趁现在让烟入味、树皮成形。',c:'树皮期'}, en:{v:'Bark is forming. Watch for stall starting around 148°F.',w:'Meat at ' + coreF + '°F. Wet-bulb evap will plateau soon — let smoke and crust build now.',c:'Bark phase'} },
+      stall:   { zh:{v:'建议包屠夫纸推过 stall。',w:'Meat 卡在 ' + coreF + '°F，表面锁在 wet-bulb 162°F。包纸早约 2 小时完成，bark 略软、juicy +6。',c:'建议'}, en:{v:'Wrap in butcher paper to push through.',w:'Meat plateaued at ' + coreF + '°F, surface locked at wet-bulb 162°F. Wrapping cuts ~2 h off finish.',c:'Stall action'} },
+      push:    { zh:{v:'继续等到 200-205°F 探针滑入。',w:'Meat 现在 ' + coreF + '°F，再升 ' + Math.max(0, 203 - coreF) + '°F 就能 probe-tender。约 1-2 小时。',c:'冲温期'}, en:{v:'Hold until 200-205°F probe-tender.',w:'Meat at ' + coreF + '°F, ~' + Math.max(0, 203 - coreF) + '°F to go. About 1-2 h.',c:'Push phase'} },
+      finish:  { zh:{v:'出炉，铝箔包静置 1 小时。',w:'Collagen 转化 ' + Math.round((s.C||0)*100) + '%，meat ' + coreF + '°F。静置让肉汁回流。',c:'出炉'}, en:{v:'Pull and rest in foil for 1 h.',w:'Collagen ' + Math.round((s.C||0)*100) + '% converted, meat ' + coreF + '°F. Rest lets juices redistribute.',c:'Done'} },
+      rest:    { zh:{v:'静置中，等到吃饭时间切片。',w:'保温箱 60-71°C，每多 15 分钟肉汁多保留约 3%。',c:'静置'}, en:{v:'Resting. Slice at serving time.',w:'Hold at 60-71°C. Each extra 15 min retains ~3% more juice.',c:'Resting'} }
     };
     var pick = (msgs[phaseId] && msgs[phaseId][lang]) || msgs.startup.zh;
     return { verdict: pick.v, why: pick.w, confidence: pick.c };
@@ -152,18 +126,9 @@
   }
 
   function $(id) { return document.getElementById(id); }
-  function css(name, fallback) {
-    var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    return v || fallback;
-  }
+  function css(name, fallback) { var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim(); return v || fallback; }
   function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
-  function formatClock(min) {
-    if (min < 0) min = 0;
-    var h = Math.floor(min / 60);
-    var m = Math.round(min % 60);
-    return h + ':' + (m < 10 ? '0' + m : m);
-  }
-  function formatF(c) { return Math.round(C.cToF(c)) + 'F'; }
+  function formatClock(min) { if (min < 0) min = 0; var h = Math.floor(min/60), m = Math.round(min%60); return h + ':' + (m<10?'0'+m:m); }
 
   function defaultEventsForPreset(p) { return []; }
 
@@ -175,20 +140,15 @@
     });
     var fresh = Sim.create(inputs);
     fresh.damperPct = view.preset.policy.damperPct;
-    view.sim = fresh;
-    view.samples = [];
+    view.sim = fresh; view.samples = [];
     view.events.sort(function (a, b) { return a.t - b.t; });
     pushSample(true);
-    var evIdx = 0;
-    var sorted = view.events;
-    var horizon = view.horizonMin;
+    var evIdx = 0, sorted = view.events, horizon = view.horizonMin;
     while (fresh.tSimMin < horizon && fresh.phase !== 'slice') {
       while (evIdx < sorted.length && sorted[evIdx].t <= fresh.tSimMin + 0.5) {
-        applyEventToSim(fresh, sorted[evIdx]);
-        evIdx++;
+        applyEventToSim(fresh, sorted[evIdx]); evIdx++;
       }
-      Sim.step(fresh, 60);
-      pushSample(false);
+      Sim.step(fresh, 60); pushSample(false);
     }
     fresh.eventLog = view.events.slice();
     return fresh;
@@ -200,13 +160,9 @@
     if (!force && last && view.sim.tSimMin - last.x < 1) return;
     var n = view.sim.T.length - 1;
     var d = scoreFromState(view.sim);
-    view.samples.push({
-      x: view.sim.tSimMin,
-      pit: C.cToF(view.sim.tPitC),
-      meat: C.cToF(view.sim.T[n]),
-      done: d.doneness, tender: d.tender, juicy: d.juicy,
-      bark: d.bark, smoke: d.smoke
-    });
+    view.samples.push({ x: view.sim.tSimMin,
+      pit: C.cToF(view.sim.tPitC), meat: C.cToF(view.sim.T[n]),
+      done: d.doneness, tender: d.tender, juicy: d.juicy, bark: d.bark, smoke: d.smoke });
   }
 
   function applyEventToSim(state, e) {
@@ -228,10 +184,7 @@
   function rerenderThrottled() {
     if (view.replayPending) return;
     view.replayPending = true;
-    requestAnimationFrame(function () {
-      view.replayPending = false;
-      replayCook(); syncCharts(false); updateUI();
-    });
+    requestAnimationFrame(function () { view.replayPending = false; replayCook(); syncCharts(false); updateUI(); });
   }
   function setCursor(t) { view.cursorMin = clamp(t, 0, view.horizonMin); syncCharts(false); updateUI(); }
 
@@ -293,8 +246,7 @@
     for (var i = view.events.length - 1; i >= 0; i--) {
       var e = view.events[i];
       if ((e.kind === 'refuel' || e.kind === 'ignite') && e.t <= t + 0.5) {
-        e.n -= 1;
-        if (e.n <= 0) view.events.splice(i, 1);
+        e.n -= 1; if (e.n <= 0) view.events.splice(i, 1);
         return true;
       }
     }
@@ -329,30 +281,31 @@
   function toast(msg) {
     var el = $('app-toast');
     if (!el) {
-      el = document.createElement('div');
-      el.id = 'app-toast'; el.className = 'app-toast';
+      el = document.createElement('div'); el.id = 'app-toast'; el.className = 'app-toast';
       document.body.appendChild(el);
     }
-    el.textContent = msg;
-    el.classList.add('show');
+    el.textContent = msg; el.classList.add('show');
     clearTimeout(el._hideT);
     el._hideT = setTimeout(function () { el.classList.remove('show'); }, 1600);
   }
 
   function scoreFromState(s) {
-    if (!s) return { doneness: 0, tender: 0, juicy: 100, bark: 0, smoke: 0 };
+    if (!s) return { doneness: 0, tender: 0, juicy: 100, bark: 0, smoke: 0, burn: 0, creosote: 0 };
     var n = s.T.length - 1;
     var coreF = C.cToF(s.T[n]);
     var water = s.wRetained != null ? s.wRetained : s.w;
     var smokeGood = s.smoke ? s.smoke.good : 0;
     var smokeBad  = s.smoke ? s.smoke.bad  : 0;
-    var wrapped = s.wrapState && s.wrapState !== 'none';
-    var tender = clamp(((s.C || 0) / 0.85) * 100, 0, 100);
-    var juicy  = clamp((water / 0.75) * 100, 0, 100);
+    var burn      = s.burnLevel || 0;
+    var creosote  = s.creosote || 0;
+    // Thermal abuse multiplier: burn=0.5 zeros bark, halves tender/juicy.
+    var abuseMul = Math.max(0, 1 - burn * 1.8);
+    var tender = clamp(((s.C || 0) / 0.85) * 100, 0, 100) * abuseMul;
+    var juicy  = clamp((water / 0.75) * 100, 0, 100) * Math.max(0.2, abuseMul);
     var doneness = clamp(100 - Math.abs(coreF - 203) * 2.5, 0, 100);
-    var smoke = clamp(smokeGood * 60 - smokeBad * 35, 0, 100);
-    var bark = clamp((s.crust || 0) * 90 + smokeGood * 15, 0, 100);
-    return { doneness: doneness, tender: tender, juicy: juicy, bark: bark, smoke: smoke };
+    var smoke = clamp(smokeGood * 60 - smokeBad * 35 - creosote * 80, 0, 100);
+    var bark = clamp((s.crust || 0) * 90 + smokeGood * 15, 0, 100) * abuseMul;
+    return { doneness: doneness, tender: tender, juicy: juicy, bark: bark, smoke: smoke, burn: burn, creosote: creosote };
   }
 
   function scoreCook() {
@@ -360,11 +313,9 @@
     var d = scoreFromState(s);
     var arr = [d.doneness, d.tender, d.juicy, d.bark, d.smoke];
     var overall = arr.reduce(function (a, b) { return a + b; }, 0) / arr.length;
-    return {
-      labels: ['Done', 'Tender', 'Juicy', 'Bark', 'Smoke'],
-      scores: arr.map(function (v) { return Math.round(v); }),
-      overall: Math.round(overall)
-    };
+    return { labels: ['Done', 'Tender', 'Juicy', 'Bark', 'Smoke'],
+             scores: arr.map(function (v) { return Math.round(v); }),
+             overall: Math.round(overall) };
   }
 
   function physicsReadouts() {
@@ -374,22 +325,16 @@
     var n = s.T.length - 1;
     var coreF = C.cToF(s.T[n]);
     var thicknessIn = s.halfThickM ? (2 * s.halfThickM / 0.0254) : 3;
-    var pStall = Stall ? Stall.stallProbability(coreF, s.humidityPct || 50,
-        s.windMph || 2, thicknessIn, recentSlope()) : 0;
+    var pStall = Stall ? Stall.stallProbability(coreF, s.humidityPct || 50, s.windMph || 2, thicknessIn, recentSlope()) : 0;
     var w = s.wRetained != null ? s.wRetained : s.w;
-    return {
-      collagen: Math.round((s.C || 0) * 100),
-      water: Math.round(w * 100),
-      stall: Math.round(pStall * 100),
-      qFireW: Math.round(qFireW)
-    };
+    return { collagen: Math.round((s.C || 0) * 100), water: Math.round(w * 100),
+             stall: Math.round(pStall * 100), qFireW: Math.round(qFireW) };
   }
 
   function recentSlope() {
     var s = view.samples;
     if (s.length < 2) return 0;
-    var last = s[s.length - 1];
-    var first = last;
+    var last = s[s.length - 1], first = last;
     for (var i = s.length - 2; i >= 0; i--) {
       if (s[i].x <= last.x - 5) { first = s[i]; break; }
       first = s[i];
@@ -475,17 +420,17 @@
   function makeTimelineChart() {
     if (!window.Chart) return null;
     var canvas = $('chart-timeline');
-    var DIM_COLORS = { done: '#16A34A', tender: '#B85B2D', juicy: '#2A8AC5', bark: '#6B4F32', smoke: '#7E57C2' };
+    var DIM = { done: '#16A34A', tender: '#B85B2D', juicy: '#2A8AC5', bark: '#6B4F32', smoke: '#7E57C2' };
     return new Chart(canvas.getContext('2d'), {
       type: 'line',
       data: { datasets: [
         { label: 'Pit',  yAxisID: 'y', data: [], borderColor: '#E8763A', backgroundColor: 'rgba(232,118,58,0.10)', borderWidth: 3, pointRadius: 0, tension: 0.25 },
         { label: 'Meat', yAxisID: 'y', data: [], borderColor: '#F5F0E6', backgroundColor: 'rgba(245,240,230,0.10)', borderWidth: 3, pointRadius: 0, tension: 0.25, fill: true },
-        { label: 'Done',   yAxisID: 'y2', data: [], borderColor: DIM_COLORS.done,   borderWidth: 1.5, pointRadius: 0, tension: 0.2, borderDash: [2, 3] },
-        { label: 'Tender', yAxisID: 'y2', data: [], borderColor: DIM_COLORS.tender, borderWidth: 1.5, pointRadius: 0, tension: 0.2, borderDash: [2, 3] },
-        { label: 'Juicy',  yAxisID: 'y2', data: [], borderColor: DIM_COLORS.juicy,  borderWidth: 1.5, pointRadius: 0, tension: 0.2, borderDash: [2, 3] },
-        { label: 'Bark',   yAxisID: 'y2', data: [], borderColor: DIM_COLORS.bark,   borderWidth: 1.5, pointRadius: 0, tension: 0.2, borderDash: [2, 3] },
-        { label: 'Smoke',  yAxisID: 'y2', data: [], borderColor: DIM_COLORS.smoke,  borderWidth: 1.5, pointRadius: 0, tension: 0.2, borderDash: [2, 3] }
+        { label: 'Done',   yAxisID: 'y2', data: [], borderColor: DIM.done,   borderWidth: 1.5, pointRadius: 0, tension: 0.2, borderDash: [2, 3] },
+        { label: 'Tender', yAxisID: 'y2', data: [], borderColor: DIM.tender, borderWidth: 1.5, pointRadius: 0, tension: 0.2, borderDash: [2, 3] },
+        { label: 'Juicy',  yAxisID: 'y2', data: [], borderColor: DIM.juicy,  borderWidth: 1.5, pointRadius: 0, tension: 0.2, borderDash: [2, 3] },
+        { label: 'Bark',   yAxisID: 'y2', data: [], borderColor: DIM.bark,   borderWidth: 1.5, pointRadius: 0, tension: 0.2, borderDash: [2, 3] },
+        { label: 'Smoke',  yAxisID: 'y2', data: [], borderColor: DIM.smoke,  borderWidth: 1.5, pointRadius: 0, tension: 0.2, borderDash: [2, 3] }
       ]},
       options: {
         animation: false, parsing: false, responsive: true, maintainAspectRatio: false,
@@ -499,15 +444,12 @@
           annotation: { annotations: {} }
         },
         scales: {
-          x: { type: 'linear', min: 0, max: 720,
-               grid: { color: 'rgba(245,240,230,0.06)' },
+          x: { type: 'linear', min: 0, max: 720, grid: { color: 'rgba(245,240,230,0.06)' },
                ticks: { color: '#8B8478', maxTicksLimit: 9,
                  callback: function (v) { return [formatClockOfDay(view.overrides.tStartMin + v), '+' + formatClock(v)]; } } },
-          y: { position: 'left', min: 30, max: 330,
-               grid: { color: 'rgba(245,240,230,0.06)' },
-               ticks: { color: '#8B8478', callback: function (v) { return v + 'F'; } } },
-          y2: { position: 'right', min: 0, max: 100,
-                grid: { drawOnChartArea: false },
+          y:  { position: 'left',  min: 30, max: 330, grid: { color: 'rgba(245,240,230,0.06)' },
+                ticks: { color: '#8B8478', callback: function (v) { return v + 'F'; } } },
+          y2: { position: 'right', min: 0,  max: 100, grid: { drawOnChartArea: false },
                 ticks: { color: '#8B8478', callback: function (v) { return v; }, stepSize: 25 } }
         }
       }
@@ -520,18 +462,13 @@
     return new Chart(canvas.getContext('2d'), {
       type: 'radar',
       data: { labels: ['Done', 'Tender', 'Juicy', 'Bark', 'Smoke'],
-              datasets: [{ data: [0,0,100,0,0],
-                           borderColor: '#E8763A',
-                           backgroundColor: 'rgba(232,118,58,0.18)',
-                           borderWidth: 2, pointRadius: 2 }] },
-      options: {
-        animation: false, responsive: true, maintainAspectRatio: false,
+              datasets: [{ data: [0,0,100,0,0], borderColor: '#E8763A', backgroundColor: 'rgba(232,118,58,0.18)', borderWidth: 2, pointRadius: 2 }] },
+      options: { animation: false, responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { enabled: false } },
         scales: { r: { min: 0, max: 100, ticks: { display: false, stepSize: 25 },
                        angleLines: { color: 'rgba(245,240,230,0.08)' },
                        grid: { color: 'rgba(245,240,230,0.08)' },
-                       pointLabels: { color: '#8B8478', font: { size: 11 } } } }
-      }
+                       pointLabels: { color: '#8B8478', font: { size: 11 } } } } }
     });
   }
 
@@ -552,9 +489,9 @@
     events.forEach(function (e, i) {
       var sty = eventAnnotationStyle(e.kind);
       var labelText;
-      if (e.kind === 'refuel')      labelText = '+' + e.n;
+      if (e.kind === 'refuel') labelText = '+' + e.n;
       else if (e.kind === 'ignite') labelText = sty.symbol + e.n;
-      else                          labelText = sty.symbol;
+      else labelText = sty.symbol;
       ann['ev-' + i] = {
         type: 'line', scaleID: 'x', value: e.t,
         borderColor: sty.color, borderWidth: 1.25, borderDash: [3, 4],
@@ -565,8 +502,7 @@
                  borderRadius: 2, yAdjust: -4 }
       };
     });
-    var cursorLabel = '▼ ' + formatClockOfDay(view.overrides.tStartMin + view.cursorMin)
-                    + ' (+' + formatClock(view.cursorMin) + ')';
+    var cursorLabel = '▼ ' + formatClockOfDay(view.overrides.tStartMin + view.cursorMin) + ' (+' + formatClock(view.cursorMin) + ')';
     ann['cursor'] = {
       type: 'line', scaleID: 'x', value: view.cursorMin,
       borderColor: '#E8763A', borderWidth: 2, drawTime: 'afterDatasetsDraw',
@@ -650,13 +586,10 @@
         var label = eventLabel(e);
         return '<button type="button" class="event-chip event-' + eventLane(e.kind).toLowerCase()
           + '" style="left:' + left + '%" data-idx="' + idx + '" '
-          + 'title="' + label + ' @ ' + formatClock(e.t) + '">'
-          + label + '</button>';
+          + 'title="' + label + ' @ ' + formatClock(e.t) + '">' + label + '</button>';
       }).join('');
-      return '<div class="event-row" data-lane="' + lane + '">'
-        + '<span class="lane-label">' + lane + '</span>'
-        + '<div class="lane-track" data-track="1"><span class="lane-cursor" style="left:' + cursorPct + '%"></span>'
-        + chips + '</div></div>';
+      return '<div class="event-row" data-lane="' + lane + '"><span class="lane-label">' + lane + '</span>'
+        + '<div class="lane-track" data-track="1"><span class="lane-cursor" style="left:' + cursorPct + '%"></span>' + chips + '</div></div>';
     }).join('');
     root.innerHTML = html;
     Array.prototype.forEach.call(root.querySelectorAll('[data-track]'), bindLaneTrack);
@@ -679,8 +612,7 @@
     chip.addEventListener('pointerdown', function (e) {
       e.preventDefault(); e.stopPropagation();
       dragging = true; moved = false;
-      startX = e.clientX;
-      startT = view.events[idx].t;
+      startX = e.clientX; startT = view.events[idx].t;
       trackRect = chip.parentElement.getBoundingClientRect();
       pushHistory();
       try { chip.setPointerCapture(e.pointerId); } catch (_) {}
@@ -691,8 +623,7 @@
       if (Math.abs(dx) > 3) moved = true;
       if (!moved) return;
       var ratio = view.horizonMin / trackRect.width;
-      var newT = clamp(startT + dx * ratio, 0, view.horizonMin);
-      view.events[idx].t = newT;
+      view.events[idx].t = clamp(startT + dx * ratio, 0, view.horizonMin);
       rerenderThrottled();
     });
     chip.addEventListener('pointerup', function (e) {
@@ -713,7 +644,6 @@
     dock.querySelectorAll('[data-event]').forEach(function (btn) {
       btn.addEventListener('click', function () { applyEvent(btn.dataset.event); });
     });
-    // Primary dock buttons (.dock-btn outside event-dock) also need wiring
     document.querySelectorAll('.dock-btn[data-event]').forEach(function (btn) {
       btn.addEventListener('click', function () { applyEvent(btn.dataset.event); });
     });
@@ -743,7 +673,7 @@
     pushHistory();
     var added = 0;
     for (var t = startMin; t <= endMin; t += periodMin) { addCoalEvent(t, 'refuel', count); added++; }
-    toast('Ladder: +' + count + ' coal × ' + added + ' (every ' + periodMin + ' min)');
+    toast('Ladder: +' + count + ' coal × ' + added);
     rerender(false);
   }
 
@@ -755,9 +685,7 @@
     btn.addEventListener('click', function () {
       var s = start ? parseInt(start.value, 10) : 0;
       var e = end   ? parseInt(end.value, 10)   : view.horizonMin;
-      var p = parseInt(period.value, 10);
-      var c = parseInt(count.value, 10);
-      applyLadder(s, e, p, c);
+      applyLadder(s, e, parseInt(period.value, 10), parseInt(count.value, 10));
     });
     [start, end, period, count].forEach(function (el) {
       if (el) el.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); btn.click(); } });
@@ -791,8 +719,8 @@
     }
   }
 
-  function formatStartTime(m) { var h = Math.floor(m / 60) % 24; var mm = m % 60; return (h<10?'0'+h:h) + ':' + (mm<10?'0'+mm:mm); }
-  function formatClockOfDay(m) { var d = ((m % 1440) + 1440) % 1440; var h = Math.floor(d / 60); var mm = Math.round(d % 60); return h + ':' + (mm < 10 ? '0' + mm : mm); }
+  function formatStartTime(m) { var h = Math.floor(m/60)%24, mm = m%60; return (h<10?'0'+h:h) + ':' + (mm<10?'0'+mm:mm); }
+  function formatClockOfDay(m) { var d = ((m%1440)+1440)%1440, h = Math.floor(d/60), mm = Math.round(d%60); return h + ':' + (mm<10?'0'+mm:mm); }
 
   function resetToPresetDefaults() {
     view.preset = Presets.get(view.presetId);
@@ -811,20 +739,14 @@
   }
 
   function applyTheme(mode) {
-    if (mode === 'dark') {
-      document.documentElement.setAttribute('data-theme', 'dark');
-      $('theme-icon').textContent = '☀';
-    } else {
-      document.documentElement.setAttribute('data-theme', 'light');
-      $('theme-icon').textContent = '☾';
-    }
+    if (mode === 'dark') { document.documentElement.setAttribute('data-theme', 'dark'); $('theme-icon').textContent = '☀'; }
+    else { document.documentElement.setAttribute('data-theme', 'light'); $('theme-icon').textContent = '☾'; }
     try { localStorage.setItem('smoker.theme.v2', mode); } catch (e) {}
   }
   function initTheme() {
     var saved = null;
     try { saved = localStorage.getItem('smoker.theme.v2'); } catch (e) {}
-    if (saved) applyTheme(saved);
-    else applyTheme('dark');
+    if (saved) applyTheme(saved); else applyTheme('dark');
     $('btn-theme').addEventListener('click', function () {
       var current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
       applyTheme(current === 'dark' ? 'light' : 'dark');
