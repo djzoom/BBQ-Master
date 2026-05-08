@@ -1520,6 +1520,42 @@ body {
   font: 800 18px/1 var(--mono);
 }
 
+.physics-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.physics-strip span {
+  min-width: 128px;
+  height: 30px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--tool-bg);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.physics-strip b {
+  color: var(--score-line, var(--text));
+  font: 700 14px/1 var(--mono);
+}
+.physics-strip i {
+  font-style: normal;
+  font-weight: 500;
+  color: var(--text-faint, #94A3B8);
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 10px;
+  margin-left: 2px;
+}
+
 .timeline-canvas {
   min-height: 330px;
   border: 1px solid var(--border);

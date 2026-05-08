@@ -9,6 +9,8 @@
   var C = window.SmokerSim.constants;
   var Sim = window.SmokerSim.simulator;
   var Presets = window.SmokerSim.presets;
+  var FM = window.SmokerSim.fireModel;
+  var Stall = window.SmokerSim.stallModel;
 
   var LANES = ['Fire', 'Smoke', 'Wrap', 'Handling'];
   var EVENT_DEFS = [
@@ -184,6 +186,7 @@
   }
 
   function scoreCook() {
+    // Each dimension cites the PHYSICS.md section that drives it.
     var s = view.sim;
     var n = s.T.length - 1;
     var coreF = C.cToF(s.T[n]);
@@ -192,17 +195,62 @@
     var smokeBad = s.smoke ? s.smoke.bad : 0;
     var wrapped = s.wrapState && s.wrapState !== 'none';
 
-    var doneness = clamp(100 - Math.abs(coreF - 203) * 2.8, 0, 100);
-    var tender = clamp((s.C || 0) * 100, 0, 100);
-    var juicy = clamp(18 + water * 105 - Math.max(0, s.tSimMin - 720) * 0.025, 0, 100);
-    var bark = clamp(18 + Math.min(s.tSimMin / 240, 1) * 42 + smokeGood * 20 - (wrapped ? 8 : 0), 0, 100);
-    var smoke = clamp(12 + smokeGood * 65 - smokeBad * 28, 0, 100);
+    // §4 collagen — direct: full credit at C ≥ 0.85 (probe-tender), capped 100
+    var tender = clamp(((s.C || 0) / 0.85) * 100, 0, 100);
+
+    // §3 water budget + rest rebound — direct on retained water
+    var juicy = clamp(water * 100, 0, 100);
+
+    // §8.7 doneness — distance from 203°F probe-tender target
+    var doneness = clamp(100 - Math.abs(coreF - 203) * 2.5, 0, 100);
+
+    // §5 smoke uptake (good vs creosote) — net flavour
+    var smoke = clamp(15 + smokeGood * 60 - smokeBad * 35, 0, 100);
+
+    // §3 + bark formation — surface drying time + smoke condensation
+    var barkTime = Math.min(s.tSimMin / 240, 1);
+    var bark = clamp(18 + barkTime * 42 + smokeGood * 18 - (wrapped ? 10 : 0), 0, 100);
+
     var scores = [doneness, tender, juicy, bark, smoke];
     var overall = scores.reduce(function (sum, v) { return sum + v; }, 0) / scores.length;
     return {
       labels: ['Done', 'Tender', 'Juicy', 'Bark', 'Smoke'],
       scores: scores.map(function (v) { return Math.round(v); }),
       overall: Math.round(overall)
+    };
+  }
+
+  function recentSlopeFperMin() {
+    // °F/min over last ~5 sim minutes from the sample buffer.
+    var s = view.samples;
+    if (s.length < 2) return 0;
+    var last = s[s.length - 1];
+    var cutoff = last.x - 5;
+    var first = last;
+    for (var i = s.length - 2; i >= 0; i--) {
+      if (s[i].x <= cutoff) { first = s[i]; break; }
+      first = s[i];
+    }
+    var dt = last.x - first.x;
+    if (dt <= 0.1) return 0;
+    return (last.meat - first.meat) / dt;
+  }
+
+  function physicsReadouts() {
+    var s = view.sim;
+    if (!s) return { collagen: 0, water: 100, stall: 0, qFireW: 0 };
+    var qFireW = FM ? FM.qFire(s.coals, s.tSimMin, s.damperPct) : 0;
+    var n = s.T.length - 1;
+    var coreF = C.cToF(s.T[n]);
+    var thicknessIn = s.halfThickM ? (2 * s.halfThickM / 0.0254) : 3;
+    var pStall = Stall ? Stall.stallProbability(coreF, s.humidityPct || 50,
+        s.windMph || 2, thicknessIn, recentSlopeFperMin()) : 0;
+    var w = s.wRetained != null ? s.wRetained : s.w;
+    return {
+      collagen: Math.round((s.C || 0) * 100),
+      water: Math.round(w * 100),
+      stall: Math.round(pStall * 100),
+      qFireW: Math.round(qFireW)
     };
   }
 
@@ -235,6 +283,11 @@
     $('metric-damper').textContent = view.sim.damperPct + '%';
     $('metric-wrap').textContent = wrapLabel();
     $('score-overall').textContent = scoreCook().overall;
+    var p = physicsReadouts();
+    if ($('metric-collagen')) $('metric-collagen').textContent = p.collagen + '%';
+    if ($('metric-water'))    $('metric-water').textContent    = p.water + '%';
+    if ($('metric-stall'))    $('metric-stall').textContent    = p.stall + '%';
+    if ($('metric-fire'))     $('metric-fire').textContent     = p.qFireW + ' W';
     renderEventLanes();
   }
 
@@ -282,6 +335,10 @@
               title: function (items) { return formatClock(items[0].parsed.x); },
               label: function (ctx) { return ctx.dataset.label + ' ' + Math.round(ctx.parsed.y) + 'F'; }
             }
+          },
+          annotation: {
+            // Filled in dynamically by syncCharts(): vertical flag at each event time
+            annotations: {}
           }
         },
         scales: {
@@ -344,12 +401,62 @@
     });
   }
 
+  function eventAnnotationStyle(kind) {
+    // Color flag by physical category. Cited tones map to PHYSICS.md sections.
+    if (kind === 'ignite' || kind === 'refuel') return { color: '#E5483D', symbol: '🔥' };
+    if (kind === 'wood')                        return { color: '#C57A2A', symbol: '🪵' };
+    if (kind === 'wrap')                        return { color: '#6B7280', symbol: '📦' };
+    if (kind === 'spritz')                      return { color: '#2A8AC5', symbol: '💧' };
+    if (kind === 'lid')                         return { color: '#94A3B8', symbol: '↕' };
+    if (kind === 'damper')                      return { color: '#475569', symbol: '◎' };
+    if (kind === 'pull' || kind === 'slice')    return { color: '#16A34A', symbol: '✓' };
+    return { color: '#94A3B8', symbol: '·' };
+  }
+
+  function buildEventAnnotations(events) {
+    var ann = {};
+    if (!events) return ann;
+    events.forEach(function (e, i) {
+      var sty = eventAnnotationStyle(e.kind);
+      var labelText;
+      if (e.kind === 'refuel')      labelText = '+' + e.n;
+      else if (e.kind === 'ignite') labelText = sty.symbol + e.n;
+      else                          labelText = sty.symbol;
+      ann['ev-' + i] = {
+        type: 'line',
+        scaleID: 'x',
+        value: e.t,
+        borderColor: sty.color,
+        borderWidth: 1.25,
+        borderDash: [3, 4],
+        drawTime: 'beforeDatasetsDraw',
+        label: {
+          display: true,
+          content: labelText,
+          position: 'start',
+          backgroundColor: sty.color,
+          color: '#fff',
+          font: { size: 9, weight: '700' },
+          padding: { top: 1, bottom: 1, left: 4, right: 4 },
+          borderRadius: 2,
+          yAdjust: -4
+        }
+      };
+    });
+    return ann;
+  }
+
   function syncCharts(reset) {
     var horizon = horizonMin();
     if (view.timelineChart) {
       view.timelineChart.data.datasets[0].data = view.samples.map(function (p) { return { x: p.x, y: p.pit }; });
       view.timelineChart.data.datasets[1].data = view.samples.map(function (p) { return { x: p.x, y: p.meat }; });
       view.timelineChart.options.scales.x.max = horizon;
+      // Vertical event flags driven by simulator.eventLog
+      var annPlugin = view.timelineChart.options.plugins.annotation;
+      if (annPlugin) {
+        annPlugin.annotations = buildEventAnnotations(view.sim && view.sim.eventLog);
+      }
       view.timelineChart.update(reset ? undefined : 'none');
     }
     if (view.scoreChart && view.sim) {
