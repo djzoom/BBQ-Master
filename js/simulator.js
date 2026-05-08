@@ -56,6 +56,11 @@ window.SmokerSim.simulator = (function () {
       smoke:         { good: 0, bad: 0, ringFrozen: false },
       smokeRingGoodAtCutoff: 0,
 
+      // Crust accumulator (0..1). Integrated each step from surface
+      // temperature × dryness × wrap penalty. See scoreFromState in
+      // app.js for the bark dimension on the radar.
+      crust:         0,
+
       // Food safety: cumulative log-reductions at surface
       kSafety:       0.0,
 
@@ -156,6 +161,23 @@ window.SmokerSim.simulator = (function () {
       state.smoke = SM.step(state.smoke, state.T[0], smokeDensity, eta, subDt);
       if (!state.smoke.ringFrozen) state.smokeRingGoodAtCutoff = state.smoke.good;
 
+      // Crust (bark) accumulation. Real bark needs:
+      //   - surface in the Maillard band (95–180 °C / 200–355 °F)
+      //   - dry surface (low wSurface) — bark = dehydrated muscle + smoke
+      //   - exposed (foil traps moisture and steams the crust soft;
+      //     paper allows some still; bare is best)
+      // Integrate: dCrust/dt ∝ band(T_surf) × (1 - wSurface) × wrap_open
+      var surfC = state.T[0];
+      if (surfC >= 95 && surfC <= 180) {
+        var dryness = 1 - Math.min(1, state.wSurface || 0);
+        var wrapOpen = state.wrapState === 'aluminum_foil' ? 0.10
+                     : state.wrapState === 'butcher_paper' ? 0.55
+                     : state.wrapState === 'foil_boat'     ? 0.70
+                     : 1.0;
+        // 0.012 calibrated so ~3 h of perfect conditions reaches crust=1.0
+        state.crust = Math.min(1, (state.crust || 0) + dryness * wrapOpen * (subDt / 60) * 0.012);
+      }
+
       // Danger zone
       if (state.T[0] >= 4 && state.T[0] < 60) {
         state.dangerZoneMin += subDt / 60;
@@ -239,6 +261,21 @@ window.SmokerSim.simulator = (function () {
     state.spritzEndMin = state.tSimMin + 2;   // boost lasts ~2 min
     state.spritzCount = (state.spritzCount || 0) + 1;
     state.eventLog.push({ t: state.tSimMin, kind: 'spritz', volume: v });
+  }
+
+  /**
+   * Tallow: spoon beef tallow into the wrap. Physics:
+   *   - bumps the meat's bulk water reservoir (w += 0.05) — fat layer
+   *     literally seals in moisture so future evap eats less of it
+   *   - rewets the surface (wSurface += 0.20)
+   *   - no flux spike (unlike spritz) — fat doesn't boil off the way
+   *     mop liquid does, it just sits and lubricates
+   */
+  function tallow(state, volumeMl) {
+    var v = volumeMl || 30;
+    state.w = Math.min(1, state.w + 0.05);
+    state.wSurface = Math.min(1, (state.wSurface || 0) + 0.20);
+    state.eventLog.push({ t: state.tSimMin, kind: 'tallow', volume: v });
   }
   function pull(state) {
     state.phase = 'rest';
@@ -334,6 +371,7 @@ window.SmokerSim.simulator = (function () {
     wrap: wrap,
     openLid: openLid,
     spritz: spritz,
+    tallow: tallow,
     pull: pull,
     slice: slice,
     removeCoals: removeCoals,
