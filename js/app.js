@@ -1,1082 +1,483 @@
 /**
- * Smoker Dynamics — UI controller (Mission Control).
- * Pregame → Cook → Score. Renders decision cards, phase flow, and ETA.
+ * Smoker Dynamics — timeline-first UI controller.
+ * The physics modules remain untouched; this file only maps events to a
+ * single temperature timeline and a live final-score radar.
  */
 (function () {
   'use strict';
 
-  var C      = window.SmokerSim.constants;
-  var Sim    = window.SmokerSim.simulator;
-  var Dec    = window.SmokerSim.decisions;
-  var Pre    = window.SmokerSim.presets;
-  var MC     = window.SmokerSim.monteCarlo;
-  var Notify = window.SmokerSim.notify;
-  var CM     = window.SmokerSim.collagenModel;
+  var C = window.SmokerSim.constants;
+  var Sim = window.SmokerSim.simulator;
+  var Presets = window.SmokerSim.presets;
 
-  // ---------- app state ----------
+  var LANES = ['Fire', 'Smoke', 'Wrap', 'Handling'];
+  var EVENT_DEFS = [
+    { id: 'ignite', label: 'Light 12', lane: 'Fire', tone: 'fire' },
+    { id: 'refuel', label: '+4 Coal', lane: 'Fire', tone: 'fire' },
+    { id: 'wood', label: 'Wood', lane: 'Smoke', tone: 'smoke' },
+    { id: 'paper', label: 'Paper', lane: 'Wrap', tone: 'wrap' },
+    { id: 'foil', label: 'Foil', lane: 'Wrap', tone: 'wrap' },
+    { id: 'bare', label: 'Bare', lane: 'Wrap', tone: 'wrap' },
+    { id: 'spritz', label: 'Spritz', lane: 'Handling', tone: 'water' },
+    { id: 'lid', label: 'Lid 30s', lane: 'Handling', tone: 'handling' },
+    { id: 'damper-up', label: 'Damper +10', lane: 'Fire', tone: 'fire' },
+    { id: 'damper-down', label: 'Damper -10', lane: 'Fire', tone: 'fire' },
+    { id: 'pull', label: 'Pull', lane: 'Handling', tone: 'finish' },
+    { id: 'slice', label: 'Slice', lane: 'Handling', tone: 'finish' }
+  ];
+
   var view = {
-    screen:       'pregame',  // pregame | cook | score
-    preset:       null,
-    state:        null,
-    chart:        null,     // 5-curve detailed (inside disclosure)
-    chartPrimary: null,     // 2-curve always visible
-
-    running:      false,
-    rafHandle:    null,
-    lastWallMs:   0,
-    simPerWallS:  3600,       // ×60 default
-    history:      { samples: [] },     // for slope calc
-    eta:          null,       // { p10, p50, p90, wallClockStr }
-    dismissed:    {},         // card verdicts dismissed this session
-    nowStarted:   null,       // Date when cook started, for ETA wall-clock
-    lastVerdicts: [],         // previous render's card verdicts (for notify diff)
-    demoMode:     false,      // demo/auto-run flag
-    sparkPit:     [],         // rolling sparkline samples (60 points)
-    sparkCore:    [],
-    // A/B compare
-    compare:      null        // { a: {preset, result}, b: {preset, result} }
+    presetId: 'texas',
+    preset: null,
+    sim: null,
+    running: false,
+    loopTimer: null,
+    lastWallMs: 0,
+    speed: 7200,
+    samples: [],
+    timelineChart: null,
+    scoreChart: null
   };
 
-  // ---------- Utility ----------
-  function $(id) { return document.getElementById(id); }
-  function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
-
-  // ---------- Persistence (localStorage) ----------
-  var STORE_KEY = 'smoker.prefs.v1';
-  function loadPrefs() {
-    try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); } catch (e) { return {}; }
-  }
-  function savePrefs(patch) {
-    try {
-      var cur = loadPrefs();
-      Object.keys(patch).forEach(function (k) { cur[k] = patch[k]; });
-      localStorage.setItem(STORE_KEY, JSON.stringify(cur));
-    } catch (e) { /* quota / private mode */ }
+  function $(id) {
+    return document.getElementById(id);
   }
 
-  var PHASE_META = {
-    pregame:    { label: 'Getting ready', zh: '准备中', tone: 'neutral', color: '--text-muted' },
-    bark_build: { label: 'Smoking',       zh: '烟熏',   tone: 'active',  color: '--accent'     },
-    stall:      { label: 'Stall',         zh: '停滞期', tone: 'warn',    color: '--amber'      },
-    wrap:       { label: 'Wrapped push',  zh: '包裹推进', tone: 'active',color: '--blue'       },
-    push:       { label: 'Finishing',     zh: '收尾',   tone: 'active',  color: '--blue'       },
-    rest:       { label: 'Resting',       zh: '静置',   tone: 'neutral', color: '--purple'     },
-    slice:      { label: 'Sliced',        zh: '切片',   tone: 'done',    color: '--green-deep' }
-  };
-
-  function phaseMeta(state) {
-    if (!state) return PHASE_META.pregame;
-    var p = state.phase || 'pregame';
-    // Augment bark_build with 'stall' if we detect the plateau
-    if (p === 'bark_build' || p === 'push') {
-      var n = state.T.length - 1;
-      var coreF = C.cToF(state.T[n]);
-      var slope = Dec.slopeFperMin(view.history, 10);
-      if (coreF >= 145 && coreF <= 175 && slope < 0.4 && state.wrapState === 'none') {
-        return Object.assign({}, PHASE_META.stall, { actual: 'stall' });
-      }
-      if (state.wrapState !== 'none' && p === 'push') return PHASE_META.wrap;
-    }
-    return PHASE_META[p] || PHASE_META.pregame;
+  function css(name, fallback) {
+    var value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return value || fallback;
   }
 
-  // ---------- Pregame: preset picker ----------
-  var PRESET_ZH = {
-    texas:       { name: '德州牛胸肉',   tagline: '慢火 · 屠夫纸包裹 · 盐+黑胡椒' },
-    competition: { name: '比赛级',       tagline: '注射 + 铝箔船 + 长静置（KCBS 评分规则）' },
-    backyard:    { name: '家常快烤',     tagline: '猛火 + 铝箔 · 晚饭前搞定' },
-    custom:      { name: '自定义',       tagline: '每个参数都能调' }
-  };
+  function clamp(n, min, max) {
+    return Math.max(min, Math.min(max, n));
+  }
 
-  function renderPregame() {
-    var grid = $('preset-grid');
-    grid.innerHTML = '';
-    Pre.list().forEach(function (p) {
-      var zh = PRESET_ZH[p.id] || {};
-      var card = document.createElement('button');
-      card.className = 'preset-card';
-      card.dataset.preset = p.id;
-      card.innerHTML =
-        '<div class="preset-icon">' + p.icon + '</div>' +
-        '<div class="preset-name">' + p.name
-          + (zh.name ? '<span class="zh">' + zh.name + '</span>' : '') + '</div>' +
-        '<div class="preset-tagline">' + p.tagline
-          + (zh.tagline ? '<span class="zh">' + zh.tagline + '</span>' : '') + '</div>';
-      card.addEventListener('click', function () { pickPreset(p.id); });
-      grid.appendChild(card);
+  function formatClock(min) {
+    var total = Math.max(0, Math.round(min));
+    var h = Math.floor(total / 60);
+    var m = total % 60;
+    return h + ':' + String(m).padStart(2, '0');
+  }
+
+  function formatF(c) {
+    return Math.round(C.cToF(c)) + 'F';
+  }
+
+  function horizonMin() {
+    if (!view.sim) return 360;
+    return Math.max(360, Math.ceil((view.sim.tSimMin + 60) / 60) * 60);
+  }
+
+  function resetCook() {
+    stop();
+    view.preset = Presets.get(view.presetId);
+    view.sim = Sim.create(view.preset.inputs);
+    view.sim.damperPct = view.preset.policy.damperPct;
+    view.samples = [];
+    Sim.ignite(view.sim, view.preset.policy.igniteN || 10);
+    pushSample(true);
+    syncCharts(true);
+    updateUI();
+  }
+
+  function pushSample(force) {
+    if (!view.sim) return;
+    var last = view.samples[view.samples.length - 1];
+    if (!force && last && view.sim.tSimMin - last.x < 2) return;
+    var n = view.sim.T.length - 1;
+    view.samples.push({
+      x: view.sim.tSimMin,
+      pit: C.cToF(view.sim.tPitC),
+      meat: C.cToF(view.sim.T[n])
     });
+    if (view.samples.length > 1600) view.samples.shift();
   }
 
-  function pickPreset(id) {
-    view.preset = Pre.get(id);
-    savePrefs({ lastPreset: id });
-    show('cook');
-    setupCook();
-  }
-
-  function show(screen) {
-    view.screen = screen;
-    $('screen-pregame').hidden = screen !== 'pregame';
-    $('screen-cook').hidden    = screen !== 'cook';
-    $('screen-score').hidden   = screen !== 'score';
-  }
-
-  // ---------- Cook: setup ----------
-  function setupCook() {
-    cancelAnimationFrame(view.rafHandle);
-    view.running = false;
-    view.lastWallMs = 0;
-    view.history = { samples: [] };
-    view.dismissed = {};
-    view.nowStarted = null;
-
-    // Build state from preset
-    view.state = Sim.create(view.preset.inputs);
-    view.state.damperPct = view.preset.policy.damperPct;
-
-    // Charts — primary (always visible) + detailed 5-curve (inside disclosure)
-    if (!view.chartPrimary) view.chartPrimary = initChartPrimary();
-    else resetChartPrimary();
-    if (!view.chart) view.chart = initChart();
-    else resetChart();
-
-    // Initial render
-    updateUI();
-    forecastETA();        // pregame ETA uses policy defaults
-    $('btn-start').disabled = false;
-    $('btn-pause').disabled = true;
-  }
-
-  // ---------- Cook: loop ----------
-  function tick(now) {
-    if (!view.running) return;
-    if (!view.lastWallMs) view.lastWallMs = now;
-    var dWall = (now - view.lastWallMs) / 1000;
-    view.lastWallMs = now;
-    var dSim = dWall * view.simPerWallS;
-    if (dSim > 600) dSim = 600;
-
-    Sim.step(view.state, dSim);
-    pushHistorySample();
-    pushChartSample();
-    updateUI();
-
-    // Re-forecast every ~60 sim-min
-    if (!tick._lastForecast || view.state.tSimMin - tick._lastForecast > 60) {
-      tick._lastForecast = view.state.tSimMin;
-      forecastETA();
+  function advanceSeconds(totalSec) {
+    var remaining = Math.max(0, totalSec);
+    while (remaining > 0 && view.sim.tSimMin < 24 * 60) {
+      var stepSec = Math.min(remaining, 60);
+      Sim.step(view.sim, stepSec);
+      remaining -= stepSec;
+      pushSample(false);
     }
-
-    // Auto-stop
-    if (view.state.C >= C.COLLAGEN_DONE && view.state.phase !== 'rest') {
-      // Leave it running so user can see the "pull" decision card
-    }
-    if (view.state.phase === 'slice') { stopLoop(); showScore(); return; }
-    if (view.state.tSimMin >= C.MAX_MINUTES) { stopLoop(); return; }
-
-    view.rafHandle = requestAnimationFrame(tick);
   }
 
   function start() {
-    if (!view.state) setupCook();
-    view.simPerWallS = parseFloat($('in-speed').value) || 3600;
-    view.running = true;
-    view.nowStarted = view.nowStarted || new Date();
-    view.lastWallMs = 0;
-    $('btn-start').disabled = true;
-    $('btn-pause').disabled = false;
-    view.rafHandle = requestAnimationFrame(tick);
-  }
-
-  function pause() {
-    view.running = false;
-    cancelAnimationFrame(view.rafHandle);
-    $('btn-start').disabled = false;
-    $('btn-pause').disabled = true;
-  }
-
-  function stopLoop() {
-    view.running = false;
-    cancelAnimationFrame(view.rafHandle);
-    $('btn-start').disabled = false;
-    $('btn-pause').disabled = true;
-  }
-
-  function reset() {
-    stopLoop();
-    show('pregame');
-    view.state = null;
-    view.lastVerdicts = [];
-    Notify.reset();
-  }
-
-  // ---------- History buffer (for slope calc) ----------
-  function pushHistorySample() {
-    var n = view.state.T.length - 1;
-    view.history.samples.push({
-      t: view.state.tSimMin,
-      coreF: C.cToF(view.state.T[n])
-    });
-    if (view.history.samples.length > 600) view.history.samples.shift();
-  }
-
-  // ---------- Render ----------
-  function updateUI() {
-    if (!view.state) return;
-    var s = view.state;
-    var n = s.T.length - 1;
-    var coreF = C.cToF(s.T[n]);
-    var pitF  = C.cToF(s.tPitC);
-    var slope = Dec.slopeFperMin(view.history, 5);
-
-    // Primary readouts
-    $('pr-pit-val').textContent  = pitF.toFixed(0);
-    $('pr-core-val').textContent = coreF.toFixed(0);
-    $('pr-pit-sub').textContent  = pitSubtitle(s, pitF);
-    $('pr-core-sub').textContent = coreSubtitle(slope);
-
-    // Sparklines (rolling 60-sample buffer)
-    view.sparkPit.push(pitF);   if (view.sparkPit.length > 60) view.sparkPit.shift();
-    view.sparkCore.push(coreF); if (view.sparkCore.length > 60) view.sparkCore.shift();
-    drawSparkline('spark-pit',  view.sparkPit,  css('--red') || '#EF4444');
-    drawSparkline('spark-core', view.sparkCore, css('--amber') || '#F59E0B');
-
-    // Progress bar — based on (coreF vs target 203°F) capped
-    var progress = Math.min(100, Math.max(0, ((coreF - 40) / (203 - 40)) * 100));
-    $('progress-fill').style.width = progress + '%';
-
-    // Phase line
-    var meta = phaseMeta(s);
-    var dot  = $('phase-dot');
-    dot.style.background = meta.color ? css(meta.color) : css('--text-muted');
-    $('phase-name').innerHTML = meta.label + '<em class="zh">' + (meta.zh || '') + '</em>';
-
-    // Flow strip
-    renderFlow(meta.actual || s.phase);
-
-    // Clock
-    $('sim-clock-val').textContent = minsToClock(s.tSimMin);
-    $('damper-val').textContent = s.damperPct + '%';
-
-    // Decision cards
-    renderCards();
-
-    // Timeline
-    renderTimeline();
-  }
-
-  function pitSubtitle(state, pitF) {
-    if (state.coals.length === 0) return 'unlit · 未点火 — light your fire';
-    if (pitF > 320) return 'overshoot · 过热 — close damper';
-    if (pitF > 280) return 'hot · 偏热';
-    if (pitF < 190) return 'cold · 偏冷 — add fuel';
-    return 'stable · 稳定';
-  }
-
-  function coreSubtitle(slope) {
-    var arrow = slope > 0.3 ? '▲' : slope < -0.1 ? '▼' : '→';
-    var sign = slope >= 0 ? '+' : '';
-    return arrow + '  ' + sign + slope.toFixed(2) + ' °F/min';
-  }
-
-  function renderFlow(currentPhase) {
-    var order = ['bark_build', 'stall', 'wrap', 'push', 'rest', 'slice'];
-    document.querySelectorAll('#flow-strip .flow-step').forEach(function (el) {
-      var step = el.dataset.step;
-      el.classList.remove('current', 'done');
-      if (step === currentPhase) el.classList.add('current');
-      else if (order.indexOf(step) >= 0 && order.indexOf(step) < order.indexOf(currentPhase)) {
-        el.classList.add('done');
-      }
-    });
-  }
-
-  function renderCards() {
-    var cards = Dec.build(view.state, view.history).filter(function (c) {
-      return !view.dismissed[c.verdict];
-    });
-
-    // Notify on new verdicts (diff against previous render)
-    var prev = view.lastVerdicts || [];
-    cards.forEach(function (c) {
-      if (prev.indexOf(c.verdict) === -1) Notify.fireCard(c);
-    });
-    view.lastVerdicts = cards.map(function (c) { return c.verdict; });
-
-    var stack = $('cards-stack');
-    if (cards.length === 0) {
-      stack.innerHTML = '<div class="card-empty">All quiet — keep pit steady and wait.</div>';
+    if (view.running) {
+      stop();
       return;
     }
-    stack.innerHTML = cards.map(renderCard).join('');
-    // Wire action buttons
-    stack.querySelectorAll('[data-action]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var ev = btn.dataset.action;
-        var verdict = btn.dataset.verdict;
-        if (ev === 'dismiss') {
-          view.dismissed[verdict] = true;
-        } else {
-          dispatchEvent(ev);
-        }
-        updateUI();
-      });
-    });
+    view.running = true;
+    view.lastWallMs = performance.now();
+    $('btn-play').textContent = 'Pause';
+    view.loopTimer = window.setInterval(tick, 250);
   }
 
-  function renderCard(c) {
-    var impact = c.impact ? Object.keys(c.impact).map(function (k) {
-      return '<span class="impact-chip"><em>' + k + '</em>' + c.impact[k] + '</span>';
-    }).join('') : '';
-    var actions = (c.actions || []).map(function (a) {
-      var labelHtml = esc(a.label) + (a.label_zh ? '<span class="zh">' + esc(a.label_zh) + '</span>' : '');
-      var hintHtml = '';
-      if (a.hint || a.hint_zh) {
-        hintHtml = '<em>' + esc(a.hint || '') + (a.hint_zh ? ' · ' + esc(a.hint_zh) : '') + '</em>';
-      }
-      return '<button class="card-action" data-action="' + a.event + '" data-verdict="' + esc(c.verdict) + '">'
-        + '<span>' + labelHtml + '</span>'
-        + hintHtml
-        + '</button>';
-    }).join('');
-    var verdictHtml = esc(c.verdict)
-      + (c.verdict_zh ? '<span class="zh">' + esc(c.verdict_zh) + '</span>' : '');
-    var whyHtml = esc(c.why)
-      + (c.why_zh ? '<span class="zh">' + esc(c.why_zh) + '</span>' : '');
-    return '<article class="dc dc-' + c.tier + '">'
-      + '<header class="dc-header">'
-      +   '<span class="dc-tier">' + tierGlyph(c.tier) + '</span>'
-      +   '<h3 class="dc-verdict">' + verdictHtml + '</h3>'
-      + '</header>'
-      + '<p class="dc-why">' + whyHtml + '</p>'
-      + (impact ? '<div class="dc-impact">' + impact + '</div>' : '')
-      + (actions ? '<div class="dc-actions">' + actions + '</div>' : '')
-      + '</article>';
+  function stop() {
+    view.running = false;
+    if (view.loopTimer) window.clearInterval(view.loopTimer);
+    view.loopTimer = null;
+    if ($('btn-play')) $('btn-play').textContent = 'Run';
   }
 
-  function tierGlyph(tier) {
-    return {
-      red:       '🛑',
-      yellow:    '⚠',
-      action:    '👉',
-      recommend: '✨',
-      headsup:   '👀',
-      info:      'ℹ'
-    }[tier] || '•';
-  }
-
-  function esc(s) {
-    return String(s).replace(/[&<>"]/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-    });
-  }
-
-  function minsToClock(m) {
-    var hh = Math.floor(m / 60);
-    var mm = Math.floor(m % 60);
-    return hh + ':' + String(mm).padStart(2, '0');
-  }
-
-  // ---------- ETA forecast ----------
-  function forecastETA() {
-    try {
-      var fc = MC.forecast(view.preset.inputs, {
-        igniteN: view.preset.policy.igniteN,
-        damperPct: view.preset.policy.damperPct,
-        refuelEveryMin: 45, refuelN: 4,
-        autoWrap: view.preset.policy.wrapAt === 'auto',
-        wrapType: view.preset.policy.wrapType
-      }, 12);
-      view.eta = fc;
-      if (fc.P50 != null) {
-        var p50 = Math.round(fc.P50);
-        var pm  = Math.round((fc.P90 - fc.P10) / 2);
-        var dateStr = '';
-        if (view.nowStarted) {
-          var end = new Date(view.nowStarted.getTime() + p50 * 60 * 1000);
-          dateStr = end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        } else {
-          dateStr = '+' + minsToClock(p50);
-        }
-        $('eta-value').textContent = dateStr;
-        $('eta-range').textContent = '± ' + pm + ' min · ' + fc.confidence.toLowerCase() + ' confidence';
-      }
-    } catch (e) { /* ignore forecast errors during unstable state */ }
-  }
-
-  // ---------- Events ----------
-  function dispatchEvent(ev) {
-    var s = view.state;
-    if (!s) return;
-    switch (ev) {
-      case 'ignite-6':  Sim.ignite(s, 6);  break;
-      case 'ignite-8':  Sim.ignite(s, 8);  break;
-      case 'ignite-12': Sim.ignite(s, 12); break;
-      case 'refuel-3':  Sim.refuel(s, 3);  break;
-      case 'refuel-6':  Sim.refuel(s, 6);  break;
-      case 'wood':      Sim.addWood(s, 0.15, 'hickory'); break;
-      case 'wrap-butcher_paper': Sim.wrap(s, 'butcher_paper'); break;
-      case 'wrap-aluminum_foil': Sim.wrap(s, 'aluminum_foil'); break;
-      case 'wrap-foil_boat':     Sim.wrap(s, 'foil_boat'); break;
-      case 'wrap-none':          Sim.wrap(s, 'none'); break;
-      case 'lid-30':             Sim.openLid(s, 30); break;
-      case 'spritz':             Sim.spritz(s, 30); break;
-      case 'damper-up':
-        s.damperPct = Math.min(100, s.damperPct + 10); break;
-      case 'damper-down':
-        s.damperPct = Math.max(0, s.damperPct - 10); break;
-      case 'pull':  Sim.pull(s);  break;
-      case 'slice': Sim.slice(s, view.preset.policy.restMethod); break;
-    }
+  function tick() {
+    if (!view.running) return;
+    var now = performance.now();
+    if (!view.lastWallMs) view.lastWallMs = now;
+    var dWall = (now - view.lastWallMs) / 1000;
+    view.lastWallMs = now;
+    advanceSeconds(Math.min(dWall * view.speed, 1200));
+    syncCharts(false);
     updateUI();
-    if (view.chart) view.chart.update('none');
+    if (view.sim.phase === 'slice' || view.sim.tSimMin >= 24 * 60) {
+      stop();
+      return;
+    }
   }
 
-  function bindOverrideButtons() {
-    document.querySelectorAll('.ev-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () { dispatchEvent(btn.dataset.ev); });
-    });
-  }
-
-  // ---------- Timeline ----------
-  function renderTimeline() {
-    var s = view.state;
+  function applyEvent(id) {
+    var s = view.sim;
     if (!s) return;
-    var track = $('timeline-track');
-    var axis  = $('timeline-axis');
-    if (!track || !axis) return;
-    var maxT = Math.max(s.tSimMin, 60);
-    track.innerHTML = '';
-    s.eventLog.forEach(function (e) {
-      var el = document.createElement('div');
-      el.className = 'tl-event tl-' + e.kind;
-      el.style.left = (100 * e.t / maxT) + '%';
-      el.title = e.kind + ' @ ' + e.t.toFixed(0) + 'min';
-      el.textContent = glyphFor(e.kind);
-      track.appendChild(el);
-    });
-    axis.innerHTML = '';
-    var hours = Math.floor(maxT / 60);
-    for (var h = 0; h <= hours; h++) {
-      var tick = document.createElement('div');
-      tick.className = 'tl-tick';
-      tick.style.left = (100 * h * 60 / maxT) + '%';
-      tick.textContent = h + 'h';
-      axis.appendChild(tick);
+    switch (id) {
+      case 'ignite':
+        Sim.ignite(s, 12);
+        break;
+      case 'refuel':
+        Sim.refuel(s, 4);
+        break;
+      case 'wood':
+        Sim.addWood(s, 0.15, 'post_oak');
+        break;
+      case 'paper':
+        Sim.wrap(s, 'butcher_paper');
+        break;
+      case 'foil':
+        Sim.wrap(s, 'aluminum_foil');
+        break;
+      case 'bare':
+        Sim.wrap(s, 'none');
+        break;
+      case 'spritz':
+        Sim.spritz(s, 30);
+        break;
+      case 'lid':
+        Sim.openLid(s, 30);
+        break;
+      case 'damper-up':
+        Sim.damper(s, s.damperPct + 10);
+        break;
+      case 'damper-down':
+        Sim.damper(s, s.damperPct - 10);
+        break;
+      case 'pull':
+        Sim.pull(s);
+        break;
+      case 'slice':
+        if (s.phase !== 'rest') Sim.pull(s);
+        Sim.slice(s, view.preset.policy.restMethod);
+        break;
     }
-    var log = $('event-log');
-    log.innerHTML = s.eventLog.slice().reverse().slice(0, 20).map(function (e) {
-      return '<div class="log-row"><span class="log-t">'
-        + e.t.toFixed(0) + 'min</span> ' + glyphFor(e.kind) + ' ' + e.kind + '</div>';
-    }).join('');
+    pushSample(true);
+    syncCharts(false);
+    updateUI();
   }
 
-  function glyphFor(kind) {
+  function scoreCook() {
+    var s = view.sim;
+    var n = s.T.length - 1;
+    var coreF = C.cToF(s.T[n]);
+    var water = s.wRetained != null ? s.wRetained : s.w;
+    var smokeGood = s.smoke ? s.smoke.good : 0;
+    var smokeBad = s.smoke ? s.smoke.bad : 0;
+    var wrapped = s.wrapState && s.wrapState !== 'none';
+
+    var doneness = clamp(100 - Math.abs(coreF - 203) * 2.8, 0, 100);
+    var tender = clamp((s.C || 0) * 100, 0, 100);
+    var juicy = clamp(18 + water * 105 - Math.max(0, s.tSimMin - 720) * 0.025, 0, 100);
+    var bark = clamp(18 + Math.min(s.tSimMin / 240, 1) * 42 + smokeGood * 20 - (wrapped ? 8 : 0), 0, 100);
+    var smoke = clamp(12 + smokeGood * 65 - smokeBad * 28, 0, 100);
+    var scores = [doneness, tender, juicy, bark, smoke];
+    var overall = scores.reduce(function (sum, v) { return sum + v; }, 0) / scores.length;
     return {
-      ignite: '🔥', refuel: '＋', wood: '🪵',
-      wrap: '📜', lid: '↑', damper: '↕',
-      pull: '🧺', slice: '🔪'
-    }[kind] || '•';
+      labels: ['Done', 'Tender', 'Juicy', 'Bark', 'Smoke'],
+      scores: scores.map(function (v) { return Math.round(v); }),
+      overall: Math.round(overall)
+    };
   }
 
-  // ---------- Sparkline ----------
-  function drawSparkline(id, data, color) {
-    var canvas = $(id);
-    if (!canvas || data.length < 2) return;
-    var dpr = window.devicePixelRatio || 1;
-    var W = canvas.clientWidth || 120;
-    var H = canvas.clientHeight || 32;
-    if (canvas.width !== W * dpr) {
-      canvas.width  = W * dpr;
-      canvas.height = H * dpr;
-    }
-    var ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, W, H);
-    var min = Math.min.apply(null, data) - 2;
-    var max = Math.max.apply(null, data) + 2;
-    var span = Math.max(1, max - min);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    for (var i = 0; i < data.length; i++) {
-      var x = (i / (data.length - 1)) * W;
-      var y = H - 2 - ((data[i] - min) / span) * (H - 4);
-      if (i === 0) ctx.moveTo(x, y);
-      else         ctx.lineTo(x, y);
-    }
-    ctx.stroke();
+  function phaseLabel() {
+    if (!view.sim) return 'Ready';
+    if (view.sim.phase === 'rest') return 'Rest';
+    if (view.sim.phase === 'slice') return 'Slice';
+    if (view.sim.wrapState && view.sim.wrapState !== 'none') return 'Wrapped';
+    var n = view.sim.T.length - 1;
+    var coreF = C.cToF(view.sim.T[n]);
+    if (coreF >= 145 && coreF <= 175) return 'Stall';
+    return 'Smoke';
   }
 
-  // ---------- Primary chart (always visible: pit + meat) ----------
-  function initChartPrimary() {
-    var canvas = $('chart-primary');
-    if (!canvas || !window.Chart) return null;
-    var colPit  = css('--red') || '#EF4444';
-    var colCore = css('--amber') || '#F59E0B';
-    var text = css('--text-muted') || '#94A3B8';
-    var grid = 'rgba(148, 163, 184, 0.12)';
-    var tickFont = { size: 10, family: 'Inter' };
+  function wrapLabel() {
+    var wrap = view.sim.wrapState;
+    if (wrap === 'butcher_paper') return 'Paper';
+    if (wrap === 'aluminum_foil') return 'Foil';
+    if (wrap === 'foil_boat') return 'Boat';
+    return 'Bare';
+  }
+
+  function updateUI() {
+    if (!view.sim) return;
+    var n = view.sim.T.length - 1;
+    $('metric-clock').textContent = formatClock(view.sim.tSimMin);
+    $('metric-phase').textContent = phaseLabel();
+    $('metric-pit').textContent = formatF(view.sim.tPitC);
+    $('metric-meat').textContent = formatF(view.sim.T[n]);
+    $('metric-damper').textContent = view.sim.damperPct + '%';
+    $('metric-wrap').textContent = wrapLabel();
+    $('score-overall').textContent = scoreCook().overall;
+    renderEventLanes();
+  }
+
+  function makeTimelineChart() {
+    if (!window.Chart) return null;
+    var canvas = $('chart-timeline');
     return new Chart(canvas.getContext('2d'), {
       type: 'line',
       data: {
         datasets: [
-          { label: 'Pit',  data: [], borderColor: colPit,  backgroundColor: colPit+'20',  borderWidth: 2,  pointRadius: 0, tension: 0.25 },
-          { label: 'Core', data: [], borderColor: colCore, backgroundColor: colCore+'20', borderWidth: 2.5, pointRadius: 0, tension: 0.25, fill: { target: 'origin', above: colCore + '12' } }
+          {
+            label: 'Pit',
+            data: [],
+            borderColor: css('--pit-line', '#E5483D'),
+            backgroundColor: 'rgba(229, 72, 61, 0.10)',
+            borderWidth: 3,
+            pointRadius: 0,
+            tension: 0.25
+          },
+          {
+            label: 'Meat',
+            data: [],
+            borderColor: css('--meat-line', '#0F8C8C'),
+            backgroundColor: 'rgba(15, 140, 140, 0.10)',
+            borderWidth: 3,
+            pointRadius: 0,
+            tension: 0.25,
+            fill: true
+          }
         ]
       },
       options: {
-        responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
-        interaction: { mode: 'index', intersect: false },
+        animation: false,
+        parsing: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
         plugins: {
-          legend: { display: false },
+          legend: {
+            align: 'start',
+            labels: { boxWidth: 10, color: css('--text-secondary', '#475569'), font: { size: 12 } }
+          },
           tooltip: {
-            backgroundColor: 'rgba(15,23,42,0.95)', titleFont: { size: 11 }, bodyFont: { size: 11 },
             callbacks: {
-              title: function (items) { return 't = ' + Math.round(items[0].parsed.x) + ' min'; },
-              label: function (ctx) { return ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(0) + '°F'; }
+              title: function (items) { return formatClock(items[0].parsed.x); },
+              label: function (ctx) { return ctx.dataset.label + ' ' + Math.round(ctx.parsed.y) + 'F'; }
+            }
+          }
+        },
+        scales: {
+          x: {
+            type: 'linear',
+            min: 0,
+            max: 360,
+            grid: { color: css('--chart-grid', 'rgba(15, 23, 42, 0.09)') },
+            ticks: {
+              color: css('--text-muted', '#94A3B8'),
+              callback: function (v) { return formatClock(v); },
+              maxTicksLimit: 9
             }
           },
-          annotation: { annotations: {
-            doneLine: { type:'line', yMin:203, yMax:203, borderColor:'rgba(22,163,74,0.5)', borderWidth:1, borderDash:[3,3], label:{display:true, content:'done 203°F', position:'end', color:'#16A34A', font:{size:9}, backgroundColor:'rgba(22,163,74,0.12)', padding:2} }
-          } }
-        },
-        scales: {
-          x: { type: 'linear', min: 0, max: 60, grid: { color: grid }, ticks: { color: text, font: tickFont, maxTicksLimit: 8, callback: function(v){ return v + 'm'; } } },
-          y: { min: 30, max: 320, grid: { color: grid }, ticks: { color: text, font: tickFont, stepSize: 50, callback: function(v){ return v + '°'; } } }
+          y: {
+            min: 30,
+            max: 330,
+            grid: { color: css('--chart-grid', 'rgba(15, 23, 42, 0.09)') },
+            ticks: {
+              color: css('--text-muted', '#94A3B8'),
+              callback: function (v) { return v + 'F'; }
+            }
+          }
         }
       }
     });
   }
 
-  function resetChartPrimary() {
-    if (!view.chartPrimary) return;
-    view.chartPrimary.data.datasets.forEach(function (d) { d.data.length = 0; });
-    view.chartPrimary.options.scales.x.max = 60;
-    view.chartPrimary.update('none');
-  }
-
-  // ---------- Detailed 5-curve chart (inside Telemetry disclosure) ----------
-  function initChart() {
-    var canvas = $('chart-main');
-    if (!canvas || !window.Chart) return null;
-    var colors = {
-      pit:  css('--red') || '#EF4444',
-      core: css('--amber') || '#F59E0B',
-      surf: css('--orange') || '#FB923C',
-      w:    css('--blue') || '#3B82F6',
-      c:    css('--purple') || '#8B5CF6',
-      text: css('--text-muted') || '#94A3B8',
-      grid: 'rgba(148, 163, 184, 0.12)'
-    };
-    var tickFont = { size: 11, family: 'Inter' };
+  function makeScoreChart() {
+    if (!window.Chart) return null;
+    var canvas = $('chart-score');
     return new Chart(canvas.getContext('2d'), {
-      type: 'line',
+      type: 'radar',
       data: {
-        datasets: [
-          ds('T_pit',  colors.pit,  'yF', 2.5),
-          ds('T_core', colors.core, 'yF', 2.5),
-          ds('T_surf', colors.surf, 'yF', 1.5),
-          ds('w',      colors.w,    'yFrac', 2, [4, 3]),
-          ds('C',      colors.c,    'yFrac', 2, [2, 3])
-        ]
+        labels: ['Done', 'Tender', 'Juicy', 'Bark', 'Smoke'],
+        datasets: [{
+          data: [0, 0, 0, 0, 0],
+          borderColor: css('--score-line', '#315CFF'),
+          backgroundColor: 'rgba(49, 92, 255, 0.16)',
+          borderWidth: 2,
+          pointRadius: 2
+        }]
       },
       options: {
-        responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
-        interaction: { mode: 'index', intersect: false },
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
         scales: {
-          x:     { type: 'linear', min: 0, max: 60, title: { display: true, text: 'min' }, grid: { color: colors.grid }, ticks: { color: colors.text, font: tickFont, maxTicksLimit: 10 } },
-          yF:    { position: 'left', min: 30, max: 500, title: { display: true, text: '°F' }, grid: { color: colors.grid }, ticks: { color: colors.text, font: tickFont } },
-          yFrac: { position: 'right', min: 0, max: 1, title: { display: true, text: 'fraction' }, grid: { drawOnChartArea: false }, ticks: { color: colors.text, font: tickFont } }
-        },
-        plugins: {
-          legend: { display: false },
-          annotation: { annotations: {} }
+          r: {
+            min: 0,
+            max: 100,
+            ticks: { display: false, stepSize: 25 },
+            angleLines: { color: css('--chart-grid', 'rgba(15, 23, 42, 0.10)') },
+            grid: { color: css('--chart-grid', 'rgba(15, 23, 42, 0.10)') },
+            pointLabels: { color: css('--text-secondary', '#475569'), font: { size: 11 } }
+          }
         }
       }
     });
-    function ds(label, color, axis, width, dash) {
-      return { label: label, data: [], borderColor: color, backgroundColor: color + '20', borderWidth: width, borderDash: dash || [], pointRadius: 0, tension: 0.25, yAxisID: axis };
+  }
+
+  function syncCharts(reset) {
+    var horizon = horizonMin();
+    if (view.timelineChart) {
+      view.timelineChart.data.datasets[0].data = view.samples.map(function (p) { return { x: p.x, y: p.pit }; });
+      view.timelineChart.data.datasets[1].data = view.samples.map(function (p) { return { x: p.x, y: p.meat }; });
+      view.timelineChart.options.scales.x.max = horizon;
+      view.timelineChart.update(reset ? undefined : 'none');
+    }
+    if (view.scoreChart && view.sim) {
+      var score = scoreCook();
+      view.scoreChart.data.labels = score.labels;
+      view.scoreChart.data.datasets[0].data = score.scores;
+      view.scoreChart.update(reset ? undefined : 'none');
     }
   }
 
-  function pushChartSample() {
-    if (!view.state) return;
-    var s = view.state;
-    var n = s.T.length - 1;
-    var t = s.tSimMin;
-    var pitF  = C.cToF(s.tPitC);
-    var coreF = C.cToF(s.T[n]);
-    var surfF = C.cToF(s.T[0]);
-
-    // Primary chart (always visible)
-    if (view.chartPrimary) {
-      view.chartPrimary.data.datasets[0].data.push({ x: t, y: pitF });
-      view.chartPrimary.data.datasets[1].data.push({ x: t, y: coreF });
-      if (view.chartPrimary.options.scales.x.max < t + 20) {
-        view.chartPrimary.options.scales.x.max = Math.ceil((t + 20) / 60) * 60;
-      }
-    }
-    // Detailed 5-curve chart (inside disclosure)
-    if (view.chart) {
-      view.chart.data.datasets[0].data.push({ x: t, y: pitF });
-      view.chart.data.datasets[1].data.push({ x: t, y: coreF });
-      view.chart.data.datasets[2].data.push({ x: t, y: surfF });
-      view.chart.data.datasets[3].data.push({ x: t, y: s.w });
-      view.chart.data.datasets[4].data.push({ x: t, y: s.C });
-      if (view.chart.options.scales.x.max < t + 20) {
-        view.chart.options.scales.x.max = Math.ceil((t + 20) / 60) * 60;
-      }
-    }
-
-    if (!pushChartSample._lastUpdate || Date.now() - pushChartSample._lastUpdate > 200) {
-      if (view.chartPrimary) view.chartPrimary.update('none');
-      if (view.chart)        view.chart.update('none');
-      pushChartSample._lastUpdate = Date.now();
-    }
+  function eventLane(kind) {
+    if (kind === 'ignite' || kind === 'refuel' || kind === 'damper') return 'Fire';
+    if (kind === 'wood') return 'Smoke';
+    if (kind === 'wrap') return 'Wrap';
+    return 'Handling';
   }
 
-  function resetChart() {
-    view.chart.data.datasets.forEach(function (d) { d.data.length = 0; });
-    view.chart.options.plugins.annotation.annotations = {};
-    view.chart.options.scales.x.max = 60;
-    view.chart.update('none');
+  function eventLabel(e) {
+    if (e.kind === 'ignite') return 'Light ' + e.n;
+    if (e.kind === 'refuel') return '+' + e.n + ' Coal';
+    if (e.kind === 'wood') return 'Wood';
+    if (e.kind === 'wrap') return wrapLabelFor(e.type);
+    if (e.kind === 'spritz') return 'Spritz';
+    if (e.kind === 'lid') return 'Lid';
+    if (e.kind === 'damper') return e.pct + '%';
+    if (e.kind === 'pull') return 'Pull';
+    if (e.kind === 'slice') return 'Slice';
+    return e.kind;
   }
 
-  // ---------- Score ----------
-  function showScore() {
-    var s = view.state;
-    if (!s) return;
-    var done   = Math.min(1, s.C / C.COLLAGEN_DONE);
-    var juicyW = s.wRetained != null ? s.wRetained : s.w;
-    var juicy  = Math.max(0, Math.min(1, juicyW / 0.75));
-    var bark   = Math.max(0, Math.min(1, 1 - (s.wSurface || 0)));
-    var totalS = (s.smoke ? s.smoke.good + s.smoke.bad : 0) + 1e-9;
-    var smoke  = s.smoke ? s.smoke.good / totalS : 0;
-    var overall = Math.pow(Math.max(1e-3, done * juicy * bark * smoke), 0.25);
-
-    $('sc-done').textContent    = done.toFixed(2);
-    $('sc-juicy').textContent   = juicy.toFixed(2);
-    $('sc-bark').textContent    = bark.toFixed(2);
-    $('sc-smoke').textContent   = smoke.toFixed(2);
-    $('sc-overall').textContent = overall.toFixed(2);
-
-    var narrative = [];
-    if (done < 0.8) narrative.push('Pulled before collagen was ready — tough flat is the result.');
-    else narrative.push('Collagen fully rendered.');
-    if (juicy < 0.7) narrative.push('Meat lost more moisture than ideal — consider shorter stall or longer rest next time.');
-    else if (juicy > 0.85) narrative.push('Excellent moisture retention.');
-    if (smoke < 0.7) narrative.push('Smoke was acrid — establish thin-blue flame before adding meat.');
-    else narrative.push('Clean smoke throughout.');
-    if (s.kSafety != null) {
-      if (s.kSafety >= 7) narrative.push('Food-safety: ' + s.kSafety.toFixed(1) + '-log pathogen reduction — over the 7-log USDA target.');
-      else if (s.kSafety >= 4) narrative.push('Food-safety: ' + s.kSafety.toFixed(1) + '-log reduction (partial). Consider a hotter finish on future cooks.');
-      else narrative.push('⚠ Food-safety undercooked at surface (' + s.kSafety.toFixed(1) + '-log reduction, target ≥ 7).');
-    }
-    if (s.spritzCount > 0) narrative.push('Spritzed ' + s.spritzCount + '×.');
-    $('score-narrative').textContent = narrative.join(' ');
-
-    show('score');
+  function wrapLabelFor(type) {
+    if (type === 'butcher_paper') return 'Paper';
+    if (type === 'aluminum_foil') return 'Foil';
+    if (type === 'foil_boat') return 'Boat';
+    return 'Bare';
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  //  A/B Compare mode — headless simulation of two presets + diff
-  // ═══════════════════════════════════════════════════════════════
-
-  function openCompare() {
-    show('compare');
-    populateCompareSelectors();
+  function renderEventLanes() {
+    var root = $('event-lanes');
+    if (!root || !view.sim) return;
+    var horizon = horizonMin();
+    var playheadPct = clamp((view.sim.tSimMin / horizon) * 100, 0, 100);
+    var events = view.sim.eventLog || [];
+    root.innerHTML = LANES.map(function (lane) {
+      var chips = events.filter(function (e) {
+        return eventLane(e.kind) === lane;
+      }).map(function (e, i) {
+        var left = clamp((e.t / horizon) * 100, 0, 100);
+        var label = eventLabel(e);
+        return '<span class="event-chip event-' + eventLane(e.kind).toLowerCase() + '" style="left:' + left + '%" title="' + label + ' @ ' + formatClock(e.t) + '">' + label + '</span>';
+      }).join('');
+      return '<div class="event-row"><span class="lane-label">' + lane + '</span><div class="lane-track"><span class="lane-playhead" style="left:' + playheadPct + '%"></span>' + chips + '</div></div>';
+    }).join('');
   }
 
-  function populateCompareSelectors() {
-    var prefs = loadPrefs();
-    var defaults = [prefs.cmpA || 'texas', prefs.cmpB || 'competition'];
-    ['cmp-a-preset', 'cmp-b-preset'].forEach(function (id, idx) {
-      var sel = $(id);
-      sel.innerHTML = '';
-      Pre.list().forEach(function (p) {
-        if (p.id === 'custom') return;
-        var o = document.createElement('option');
-        o.value = p.id;
-        o.textContent = p.icon + ' ' + p.name;
-        sel.appendChild(o);
-      });
-      sel.value = defaults[idx] || sel.options[0].value;
-      sel.addEventListener('change', function () {
-        var patch = {};
-        patch[idx === 0 ? 'cmpA' : 'cmpB'] = sel.value;
-        savePrefs(patch);
+  function renderEventDock() {
+    var dock = $('event-dock');
+    dock.innerHTML = EVENT_DEFS.map(function (ev) {
+      return '<button class="event-btn tone-' + ev.tone + '" type="button" data-event="' + ev.id + '">' + ev.label + '</button>';
+    }).join('');
+    dock.querySelectorAll('[data-event]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        applyEvent(btn.dataset.event);
       });
     });
   }
 
-  function runCompare() {
-    var idA = $('cmp-a-preset').value;
-    var idB = $('cmp-b-preset').value;
-    $('cmp-spinner').hidden = false;
-    $('cmp-status-text').textContent = 'Running both cooks · 正在跑两场烤肉…';
-    $('cmp-run').disabled = true;
-
-    // Defer to next frame so the status message paints first
-    setTimeout(function () {
-      var resultA = simulateToEnd(Pre.get(idA));
-      var resultB = simulateToEnd(Pre.get(idB));
-      view.compare = {
-        a: { preset: Pre.get(idA), result: resultA },
-        b: { preset: Pre.get(idB), result: resultB }
-      };
-      renderCompareChart();
-      renderCompareDiff();
-      $('cmp-spinner').hidden = true;
-      $('cmp-status-text').textContent = '';
-      $('cmp-run').disabled = false;
-    }, 50);
-  }
-
-  function simulateToEnd(preset) {
-    var state = Sim.create(preset.inputs);
-    state.damperPct = preset.policy.damperPct;
-    Sim.ignite(state, preset.policy.igniteN);
-    // Seed wood chunks
-    (preset.policy.woodChunks || []).forEach(function (w) {
-      if (w.tMin === 0) Sim.addWood(state, 0.15, w.species || 'hickory');
+  function populatePresetSelect() {
+    var select = $('in-preset');
+    select.value = view.presetId;
+    select.addEventListener('change', function () {
+      view.presetId = select.value;
+      resetCook();
     });
-    var woodIdx = 0;
-    var refuelEvery = 45;
-    var nextRefuel = refuelEvery;
-    var pullAt = null, sliceAt = null;
-    var samples = [];
-    var targetRest = preset.policy.targetRestMin || 45;
-    var wrapType = preset.policy.wrapType || 'butcher_paper';
-    var autoWrap = preset.policy.wrapAt === 'auto';
-
-    for (var t = 0; t < C.MAX_MINUTES * 60; t += 60) {
-      // Timed wood chunks
-      while (woodIdx < (preset.policy.woodChunks || []).length) {
-        var w = preset.policy.woodChunks[woodIdx];
-        if (w.tMin === 0) { woodIdx++; continue; }
-        if (state.tSimMin >= w.tMin) {
-          Sim.addWood(state, 0.15, w.species || 'hickory');
-          woodIdx++;
-        } else { break; }
-      }
-      // Refuel cadence
-      if (state.tSimMin >= nextRefuel) {
-        Sim.refuel(state, 4);
-        nextRefuel += refuelEvery;
-      }
-      // Auto-wrap at 160°F
-      if (autoWrap && state.wrapState === 'none') {
-        var coreF = C.cToF(state.T[state.T.length - 1]);
-        if (coreF >= 160) Sim.wrap(state, wrapType);
-      }
-      Sim.step(state, 60);
-      samples.push({
-        t: state.tSimMin,
-        pitF:  C.cToF(state.tPitC),
-        coreF: C.cToF(state.T[state.T.length - 1]),
-        w:     state.w,
-        C:     state.C
-      });
-      if (!pullAt && CM.isDone(state.C)) {
-        pullAt = state.tSimMin;
-        Sim.pull(state);
-      }
-      if (pullAt && state.tSimMin - pullAt >= targetRest) {
-        Sim.slice(state, preset.policy.restMethod || 'cooler');
-        sliceAt = state.tSimMin;
-        break;
-      }
-    }
-
-    // Score
-    var done   = Math.min(1, state.C / C.COLLAGEN_DONE);
-    var juicyW = state.wRetained != null ? state.wRetained : state.w;
-    var juicy  = Math.max(0, Math.min(1, juicyW / 0.75));
-    var bark   = Math.max(0, Math.min(1, 1 - (state.wSurface || 0)));
-    var totalS = (state.smoke ? state.smoke.good + state.smoke.bad : 0) + 1e-9;
-    var smoke  = state.smoke ? state.smoke.good / totalS : 0;
-    var overall = Math.pow(Math.max(1e-3, done * juicy * bark * smoke), 0.25);
-
-    return {
-      samples: samples,
-      pullMin: pullAt,
-      sliceMin: sliceAt,
-      scores: { done: done, juicy: juicy, bark: bark, smoke: smoke, overall: overall }
-    };
   }
 
-  function renderCompareChart() {
-    var canvas = $('cmp-chart');
-    if (!canvas || !window.Chart) return;
-    if (renderCompareChart._chart) renderCompareChart._chart.destroy();
-    var A = view.compare.a, B = view.compare.b;
-
-    var colA = css('--red') || '#EF4444';
-    var colB = css('--blue') || '#3B82F6';
-    var text = css('--text-muted') || '#94A3B8';
-    var grid = 'rgba(148, 163, 184, 0.12)';
-
-    renderCompareChart._chart = new Chart(canvas.getContext('2d'), {
-      type: 'line',
-      data: {
-        datasets: [
-          ds('A · T_core', colA, A.result.samples, 'coreF'),
-          ds('B · T_core', colB, B.result.samples, 'coreF'),
-          ds('A · w',      colA, A.result.samples, 'w',   'yFrac', [4, 3]),
-          ds('B · w',      colB, B.result.samples, 'w',   'yFrac', [4, 3])
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
-        plugins: { legend: { display: true, labels: { font: { size: 11 }, color: text } } },
-        scales: {
-          x:     { type: 'linear', min: 0, title: { display: true, text: 'min' }, grid: { color: grid }, ticks: { color: text, font: { size: 11 } } },
-          yF:    { position: 'left',  min: 30, max: 220, title: { display: true, text: '°F' },       grid: { color: grid }, ticks: { color: text, font: { size: 11 } } },
-          yFrac: { position: 'right', min: 0,  max: 1,   title: { display: true, text: 'fraction' }, grid: { drawOnChartArea: false }, ticks: { color: text, font: { size: 11 } } }
-        }
-      }
-    });
-
-    function ds(label, color, samples, key, axis, dash) {
-      return {
-        label: label,
-        data: samples.map(function (s) { return { x: s.t, y: s[key] }; }),
-        borderColor: color,
-        backgroundColor: color + '20',
-        borderWidth: 2, borderDash: dash || [],
-        pointRadius: 0, tension: 0.25,
-        yAxisID: axis || 'yF'
-      };
-    }
-  }
-
-  function renderCompareDiff() {
-    var A = view.compare.a, B = view.compare.b;
-    var rA = A.result.scores, rB = B.result.scores;
-    var eA = A.result.pullMin || 0, eB = B.result.pullMin || 0;
-
-    function row(label, vA, vB, fmt, winBig) {
-      var dA = fmt(vA), dB = fmt(vB);
-      var delta = vB - vA;
-      var winnerClass = (delta > 0 && winBig) || (delta < 0 && !winBig) ? 'B' : 'A';
-      if (Math.abs(delta) < 1e-3) winnerClass = 'tie';
-      var sign = delta > 0 ? '+' : '';
-      var dDisp = fmt === fmtPct
-        ? (sign + (delta * 100).toFixed(1) + ' pp')
-        : (sign + fmt(Math.abs(delta)).replace(/^[^\d-]*/, (delta < 0 ? '−' : '')));
-      return '<tr class="win-' + winnerClass + '">'
-        + '<th>' + label + '</th>'
-        + '<td class="a">' + dA + '</td>'
-        + '<td class="b">' + dB + '</td>'
-        + '<td class="d">' + dDisp + '</td>'
-        + '</tr>';
-    }
-    function fmtTime(m) { return Math.floor(m/60) + 'h ' + String(Math.round(m%60)).padStart(2,'0') + 'm'; }
-    function fmtPct(v) { return (v * 100).toFixed(0) + '%'; }
-
-    var html =
-      '<table class="cmp-table">'
-      + '<thead><tr><th></th><th>A · ' + A.preset.name + '</th><th>B · ' + B.preset.name + '</th><th>Δ</th></tr></thead>'
-      + '<tbody>'
-      + row('Time to pull', eA, eB, fmtTime, false)  // shorter wins
-      + row('Doneness',   rA.done,    rB.done,    fmtPct, true)
-      + row('Juicy',      rA.juicy,   rB.juicy,   fmtPct, true)
-      + row('Bark',       rA.bark,    rB.bark,    fmtPct, true)
-      + row('Smoke',      rA.smoke,   rB.smoke,   fmtPct, true)
-      + row('Overall',    rA.overall, rB.overall, fmtPct, true)
-      + '</tbody></table>';
-    $('cmp-diff').innerHTML = html;
-
-    // Verdict sentence
-    var verdict = summarise(A, B);
-    $('cmp-verdict').textContent = verdict;
-  }
-
-  function summarise(A, B) {
-    var rA = A.result.scores, rB = B.result.scores;
-    var eA = A.result.pullMin || 0, eB = B.result.pullMin || 0;
-    var dTime = Math.round(eB - eA);
-    var dOverall = Math.round((rB.overall - rA.overall) * 100);
-    var dJuicy   = Math.round((rB.juicy - rA.juicy) * 100);
-
-    var parts = [];
-    if (Math.abs(dOverall) < 2) parts.push('Near tie overall.');
-    else if (dOverall > 0) parts.push('B (' + B.preset.name + ') wins by ' + dOverall + ' pp overall.');
-    else parts.push('A (' + A.preset.name + ') wins by ' + (-dOverall) + ' pp overall.');
-    if (dTime !== 0) {
-      var faster = dTime > 0 ? A.preset.name : B.preset.name;
-      parts.push(faster + ' is ' + Math.abs(dTime) + ' min faster.');
-    }
-    if (Math.abs(dJuicy) >= 3) {
-      var juicier = dJuicy > 0 ? B.preset.name : A.preset.name;
-      parts.push(juicier + ' is ' + Math.abs(dJuicy) + ' pp juicier.');
-    }
-    return parts.join(' ');
-  }
-
-  // ---------- Notify toggle ----------
-  function updateNotifyToggle() {
-    var btn = $('btn-notify');
-    if (!btn) return;
-    btn.textContent = Notify.isEnabled() ? '🔔 Alerts on' : '🔕 Alerts off';
-    btn.classList.toggle('is-off', !Notify.isEnabled());
-  }
-  function toggleNotify() {
-    Notify.toggle();
-    updateNotifyToggle();
-  }
-
-  // ---------- Demo mode ----------
-  function startDemo() {
-    view.demoMode = true;
-    view.preset = Pre.get('texas');
-    savePrefs({ lastPreset: 'texas' });
-    show('cook');
-    setupCook();
-    // Speed up to 300× so demo finishes in ~2 min of wall time
-    $('in-speed').value = '18000';
-    view.simPerWallS = 18000;
-    // Auto-start after a short beat
-    setTimeout(start, 400);
-  }
-
-  // ---------- Theme toggle ----------
   function applyTheme(mode) {
     if (mode === 'dark') {
       document.documentElement.setAttribute('data-theme', 'dark');
-      var icon = $('theme-icon'); if (icon) icon.textContent = '☀';
+      $('theme-icon').textContent = '☀';
     } else {
-      document.documentElement.removeAttribute('data-theme');
-      var icon2 = $('theme-icon'); if (icon2) icon2.textContent = '🌙';
+      document.documentElement.setAttribute('data-theme', 'light');
+      $('theme-icon').textContent = '☾';
     }
-    savePrefs({ theme: mode });
+    try { localStorage.setItem('smoker.theme.v2', mode); } catch (e) {}
   }
-  function toggleTheme() {
-    var current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
-    applyTheme(current === 'dark' ? 'light' : 'dark');
-  }
+
   function initTheme() {
-    var prefs = loadPrefs();
-    if (prefs.theme) applyTheme(prefs.theme);
-    else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      applyTheme('dark');
-    }
-  }
-
-  // ---------- Help modal ----------
-  function showHelp()  { $('modal-help').hidden = false; }
-  function hideHelp()  { $('modal-help').hidden = true;  }
-
-  // ---------- Keyboard shortcuts ----------
-  function bindKeyboard() {
-    document.addEventListener('keydown', function (e) {
-      // Skip if focus is in input/select/textarea
-      var tag = (document.activeElement && document.activeElement.tagName) || '';
-      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
-
-      switch (e.key) {
-        case ' ':
-        case 'Spacebar':
-          if (view.screen === 'cook') {
-            e.preventDefault();
-            view.running ? pause() : start();
-          }
-          break;
-        case 'r': case 'R':
-          if (view.screen === 'cook' || view.screen === 'score') reset();
-          break;
-        case 'w': case 'W':
-          if (view.state && view.state.wrapState === 'none') dispatchEvent('wrap-butcher_paper');
-          break;
-        case 'f': case 'F':
-          if (view.state && view.state.wrapState === 'none') dispatchEvent('wrap-aluminum_foil');
-          break;
-        case '+': case '=':
-          if (view.state) dispatchEvent('refuel-3');
-          break;
-        case 's': case 'S':
-          if (view.state) dispatchEvent('spritz');
-          break;
-        case 'd': case 'D':
-          toggleTheme();
-          break;
-        case '?':
-          showHelp();
-          break;
-        case 'Escape':
-          if (!$('modal-help').hidden) hideHelp();
-          break;
-      }
+    var saved = null;
+    try { saved = localStorage.getItem('smoker.theme.v2'); } catch (e) {}
+    if (saved) applyTheme(saved);
+    else applyTheme(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    $('btn-theme').addEventListener('click', function () {
+      var current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+      applyTheme(current === 'dark' ? 'light' : 'dark');
+      syncCharts(true);
     });
   }
 
-  // ---------- Bootstrap ----------
-  document.addEventListener('DOMContentLoaded', function () {
-    renderPregame();
-    bindOverrideButtons();
-    $('btn-start').addEventListener('click', start);
-    $('btn-pause').addEventListener('click', pause);
-    $('btn-reset').addEventListener('click', reset);
-    $('btn-again').addEventListener('click', reset);
-    // Restore persisted prefs
-    var prefs = loadPrefs();
-    if (prefs.speed) {
-      var sel = $('in-speed');
-      if (sel) {
-        // pick closest option
-        var want = String(prefs.speed);
-        for (var i = 0; i < sel.options.length; i++) {
-          if (sel.options[i].value === want) { sel.selectedIndex = i; break; }
-        }
-        view.simPerWallS = parseFloat(sel.value) || 3600;
-      }
-    }
-    if (prefs.cmpA) {
-      // restored lazily when compare screen opens
-    }
-
+  function bindControls() {
+    $('btn-play').addEventListener('click', start);
+    $('btn-step').addEventListener('click', function () {
+      advanceSeconds(15 * 60);
+      syncCharts(false);
+      updateUI();
+    });
+    $('btn-reset').addEventListener('click', resetCook);
     $('in-speed').addEventListener('change', function () {
-      view.simPerWallS = parseFloat($('in-speed').value) || 3600;
-      savePrefs({ speed: view.simPerWallS });
+      view.speed = parseFloat($('in-speed').value) || 7200;
     });
-    // Compare entry points
-    var bCompare = $('btn-compare');
-    if (bCompare) bCompare.addEventListener('click', openCompare);
-    var bCmpBack = $('btn-cmp-back');
-    if (bCmpBack) bCmpBack.addEventListener('click', function () { show('pregame'); });
-    var bCmpRun = $('cmp-run');
-    if (bCmpRun) bCmpRun.addEventListener('click', runCompare);
-    // Notify
-    var bNotify = $('btn-notify');
-    if (bNotify) bNotify.addEventListener('click', toggleNotify);
-    updateNotifyToggle();
+    document.addEventListener('keydown', function (e) {
+      if (e.target && /input|select|textarea/i.test(e.target.tagName)) return;
+      if (e.key === ' ') {
+        e.preventDefault();
+        start();
+      }
+      if (e.key === 'r' || e.key === 'R') resetCook();
+    });
+  }
 
-    // Demo mode
-    var bDemo = $('btn-demo');
-    if (bDemo) bDemo.addEventListener('click', startDemo);
-
-    // Theme toggle
+  document.addEventListener('DOMContentLoaded', function () {
     initTheme();
-    var bTheme = $('btn-theme');
-    if (bTheme) bTheme.addEventListener('click', toggleTheme);
-
-    // Help modal
-    var bHelp = $('btn-help');
-    var bModalClose = $('modal-close');
-    var bModalOk = $('modal-ok');
-    var mBackdrop = $('modal-help');
-    if (bHelp) bHelp.addEventListener('click', showHelp);
-    if (bModalClose) bModalClose.addEventListener('click', hideHelp);
-    if (bModalOk) bModalOk.addEventListener('click', hideHelp);
-    if (mBackdrop) mBackdrop.addEventListener('click', function (e) {
-      if (e.target === mBackdrop) hideHelp();
-    });
-
-    // Keyboard shortcuts
-    bindKeyboard();
-
-    show('pregame');
+    populatePresetSelect();
+    renderEventDock();
+    bindControls();
+    view.speed = parseFloat($('in-speed').value) || 7200;
+    view.timelineChart = makeTimelineChart();
+    view.scoreChart = makeScoreChart();
+    resetCook();
   });
 })();
