@@ -1662,18 +1662,63 @@ body {
 }
 
 .tone-fire { border-color: rgba(229, 72, 61, 0.30); }
+.tone-fire-minus { border-color: rgba(229, 72, 61, 0.45); border-style: dashed; }
 .tone-smoke { border-color: rgba(94, 75, 60, 0.38); }
 .tone-wrap { border-color: rgba(49, 92, 255, 0.32); }
 .tone-water { border-color: rgba(15, 140, 140, 0.34); }
 .tone-handling { border-color: rgba(15, 23, 42, 0.18); }
 .tone-finish { border-color: rgba(22, 163, 74, 0.36); }
+.tone-undo { border-color: rgba(15, 23, 42, 0.30); border-style: dashed; }
 
 .tone-fire:hover { background: rgba(229, 72, 61, 0.10); }
+.tone-fire-minus:hover { background: rgba(229, 72, 61, 0.16); }
 .tone-smoke:hover { background: rgba(94, 75, 60, 0.10); }
 .tone-wrap:hover { background: rgba(49, 92, 255, 0.10); }
 .tone-water:hover { background: rgba(15, 140, 140, 0.10); }
 .tone-handling:hover { background: rgba(15, 23, 42, 0.06); }
 .tone-finish:hover { background: rgba(22, 163, 74, 0.10); }
+.tone-undo:hover { background: rgba(15, 23, 42, 0.08); }
+
+/* Event chips on the lane row are now buttons — clickable to remove. */
+button.event-chip {
+  font: inherit;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0 8px;
+  outline: none;
+}
+button.event-chip:hover {
+  filter: brightness(0.95);
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+}
+button.event-chip:focus-visible {
+  box-shadow: 0 0 0 2px rgba(229, 72, 61, 0.45);
+}
+
+/* Toast — anchored bottom-center, ephemeral */
+.app-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%) translateY(16px);
+  background: var(--text, #0F172A);
+  color: var(--bg, #fff);
+  padding: 10px 18px;
+  border-radius: 999px;
+  font: 500 13px/1.4 var(--mono);
+  letter-spacing: 0.04em;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+  opacity: 0;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  pointer-events: none;
+  z-index: 200;
+}
+.app-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
 
 @media (max-width: 920px) {
   .pit-workbench {

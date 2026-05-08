@@ -14,18 +14,21 @@
 
   var LANES = ['Fire', 'Smoke', 'Wrap', 'Handling'];
   var EVENT_DEFS = [
-    { id: 'ignite', label: 'Light 12', lane: 'Fire', tone: 'fire' },
-    { id: 'refuel', label: '+4 Coal', lane: 'Fire', tone: 'fire' },
-    { id: 'wood', label: 'Wood', lane: 'Smoke', tone: 'smoke' },
-    { id: 'paper', label: 'Paper', lane: 'Wrap', tone: 'wrap' },
-    { id: 'foil', label: 'Foil', lane: 'Wrap', tone: 'wrap' },
-    { id: 'bare', label: 'Bare', lane: 'Wrap', tone: 'wrap' },
-    { id: 'spritz', label: 'Spritz', lane: 'Handling', tone: 'water' },
-    { id: 'lid', label: 'Lid 30s', lane: 'Handling', tone: 'handling' },
-    { id: 'damper-up', label: 'Damper +10', lane: 'Fire', tone: 'fire' },
-    { id: 'damper-down', label: 'Damper -10', lane: 'Fire', tone: 'fire' },
-    { id: 'pull', label: 'Pull', lane: 'Handling', tone: 'finish' },
-    { id: 'slice', label: 'Slice', lane: 'Handling', tone: 'finish' }
+    { id: 'ignite',      label: 'Light 12',  lane: 'Fire',     tone: 'fire' },
+    { id: 'refuel-1',    label: '+1 Coal',   lane: 'Fire',     tone: 'fire' },
+    { id: 'refuel-4',    label: '+4 Coal',   lane: 'Fire',     tone: 'fire' },
+    { id: 'coal-minus',  label: '−1 Coal',   lane: 'Fire',     tone: 'fire-minus' },
+    { id: 'wood',        label: 'Wood',      lane: 'Smoke',    tone: 'smoke' },
+    { id: 'paper',       label: 'Paper',     lane: 'Wrap',     tone: 'wrap' },
+    { id: 'foil',        label: 'Foil',      lane: 'Wrap',     tone: 'wrap' },
+    { id: 'bare',        label: 'Bare',      lane: 'Wrap',     tone: 'wrap' },
+    { id: 'spritz',      label: 'Spritz',    lane: 'Handling', tone: 'water' },
+    { id: 'lid',         label: 'Lid 30s',   lane: 'Handling', tone: 'handling' },
+    { id: 'damper-up',   label: 'Damper +10',lane: 'Fire',     tone: 'fire' },
+    { id: 'damper-down', label: 'Damper -10',lane: 'Fire',     tone: 'fire' },
+    { id: 'pull',        label: 'Pull',      lane: 'Handling', tone: 'finish' },
+    { id: 'slice',       label: 'Slice',     lane: 'Handling', tone: 'finish' },
+    { id: 'undo',        label: '↶ Undo',    lane: 'Handling', tone: 'undo' }
   ];
 
   var view = {
@@ -145,8 +148,16 @@
       case 'ignite':
         Sim.ignite(s, 12);
         break;
-      case 'refuel':
+      case 'refuel':       // legacy alias
+      case 'refuel-4':
         Sim.refuel(s, 4);
+        break;
+      case 'refuel-1':
+        Sim.refuel(s, 1);
+        break;
+      case 'coal-minus':
+        var removed = Sim.removeCoals(s, 1);
+        if (removed === 0) toast('No coals to remove');
         break;
       case 'wood':
         Sim.addWood(s, 0.15, 'post_oak');
@@ -179,10 +190,46 @@
         if (s.phase !== 'rest') Sim.pull(s);
         Sim.slice(s, view.preset.policy.restMethod);
         break;
+      case 'undo':
+        if (!s.eventLog.length) { toast('Nothing to undo'); break; }
+        var last = s.eventLog[s.eventLog.length - 1];
+        Sim.removeEvent(s, s.eventLog.length - 1);
+        toast('Undid ' + (last.kind === 'refuel' ? '+' + (last.n || 1) + ' coal'
+            : last.kind === 'ignite' ? 'ignite ' + last.n
+            : last.kind === 'wrap' ? 'wrap ' + last.type
+            : last.kind));
+        break;
     }
     pushSample(true);
     syncCharts(false);
     updateUI();
+  }
+
+  function removeEventByIndex(idx) {
+    var s = view.sim;
+    if (!s) return;
+    var e = s.eventLog[idx];
+    if (!e) return;
+    Sim.removeEvent(s, idx);
+    toast('Removed ' + e.kind + ' @ ' + formatClock(e.t));
+    pushSample(true);
+    syncCharts(false);
+    updateUI();
+  }
+
+  // Lightweight ephemeral toast pinned to top-right of workbench
+  function toast(msg) {
+    var el = document.getElementById('app-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'app-toast';
+      el.className = 'app-toast';
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(el._hideT);
+    el._hideT = setTimeout(function () { el.classList.remove('show'); }, 1600);
   }
 
   function scoreCook() {
@@ -501,15 +548,26 @@
     var playheadPct = clamp((view.sim.tSimMin / horizon) * 100, 0, 100);
     var events = view.sim.eventLog || [];
     root.innerHTML = LANES.map(function (lane) {
-      var chips = events.filter(function (e) {
-        return eventLane(e.kind) === lane;
-      }).map(function (e, i) {
+      var chips = events.map(function (e, idx) {
+        if (eventLane(e.kind) !== lane) return '';
         var left = clamp((e.t / horizon) * 100, 0, 100);
         var label = eventLabel(e);
-        return '<span class="event-chip event-' + eventLane(e.kind).toLowerCase() + '" style="left:' + left + '%" title="' + label + ' @ ' + formatClock(e.t) + '">' + label + '</span>';
+        // Each chip is a button so it can be removed by click. Original
+        // event index is preserved on data-idx for accurate splice.
+        return '<button type="button" class="event-chip event-' + eventLane(e.kind).toLowerCase()
+          + '" style="left:' + left + '%" data-idx="' + idx + '" '
+          + 'title="' + label + ' @ ' + formatClock(e.t) + ' — click to remove · 单击移除">'
+          + label + '</button>';
       }).join('');
       return '<div class="event-row"><span class="lane-label">' + lane + '</span><div class="lane-track"><span class="lane-playhead" style="left:' + playheadPct + '%"></span>' + chips + '</div></div>';
     }).join('');
+    // Delegate chip clicks → remove that event
+    Array.prototype.forEach.call(root.querySelectorAll('.event-chip[data-idx]'), function (chip) {
+      chip.addEventListener('click', function (e) {
+        e.stopPropagation();
+        removeEventByIndex(parseInt(chip.dataset.idx, 10));
+      });
+    });
   }
 
   function renderEventDock() {

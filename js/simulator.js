@@ -254,6 +254,73 @@ window.SmokerSim.simulator = (function () {
     state.eventLog.push({ t: state.tSimMin, kind: 'slice', restMin: tRest });
   }
 
+  // --- Reverse / undo ---
+
+  /**
+   * Peel `n` coals off the most-recent ignite/refuel batch. Used by the
+   * "−1 coal" UI button. Returns how many were actually removed.
+   * Going forward, Q_fire(t) drops because those coals are no longer in
+   * state.coals; past ticks are not retroactively recomputed.
+   */
+  function removeCoals(state, n) {
+    var want = Math.max(1, n || 1);
+    var removed = 0;
+    for (var i = state.eventLog.length - 1; i >= 0 && removed < want; i--) {
+      var e = state.eventLog[i];
+      if (e.kind !== 'refuel' && e.kind !== 'ignite') continue;
+      while (e.n > 0 && removed < want) {
+        // Remove one coal whose tIgniteMin matches this event
+        for (var j = state.coals.length - 1; j >= 0; j--) {
+          if (state.coals[j].tIgniteMin === e.t) {
+            state.coals.splice(j, 1);
+            break;
+          }
+        }
+        e.n -= 1;
+        removed += 1;
+      }
+      if (e.n <= 0) state.eventLog.splice(i, 1);
+    }
+    return removed;
+  }
+
+  /**
+   * Remove a single event by index and reverse its physics where reversible.
+   * Used by the "↶ Undo" button and by clicking a chip on the timeline.
+   */
+  function removeEvent(state, idx) {
+    if (idx < 0 || idx >= state.eventLog.length) return false;
+    var e = state.eventLog[idx];
+    if (e.kind === 'refuel' || e.kind === 'ignite') {
+      state.coals = state.coals.filter(function (c) { return c.tIgniteMin !== e.t; });
+    } else if (e.kind === 'wood') {
+      state.woodAdds = state.woodAdds.filter(function (w) { return w.tAddMin !== e.t; });
+    } else if (e.kind === 'wrap') {
+      // Revert to most recent earlier wrap event, default 'none'
+      var prev = 'none';
+      for (var i = idx - 1; i >= 0; i--) {
+        if (state.eventLog[i].kind === 'wrap') { prev = state.eventLog[i].type; break; }
+      }
+      state.wrapState = prev;
+    } else if (e.kind === 'damper') {
+      // Revert to previous damper event, default 60
+      var prevD = 60;
+      for (var k = idx - 1; k >= 0; k--) {
+        if (state.eventLog[k].kind === 'damper') { prevD = state.eventLog[k].pct; break; }
+      }
+      state.damperPct = prevD;
+    } else if (e.kind === 'pull' || e.kind === 'slice') {
+      // Revert phase to bark_build (cook resumes)
+      state.phase = 'bark_build';
+      state.wRetained = null;
+      state.tPullC = null;
+      state.tPullMin = null;
+    }
+    // spritz / lid are transient — physics already faded; we just drop the log entry
+    state.eventLog.splice(idx, 1);
+    return true;
+  }
+
   return {
     create: create,
     step: step,
@@ -265,6 +332,8 @@ window.SmokerSim.simulator = (function () {
     openLid: openLid,
     spritz: spritz,
     pull: pull,
-    slice: slice
+    slice: slice,
+    removeCoals: removeCoals,
+    removeEvent: removeEvent
   };
 })();
