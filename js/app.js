@@ -512,21 +512,29 @@
       view.scoreChart.update(reset ? undefined : 'none');
     }
     syncLaneAlignment();
+    // Defer one more time in case the canvas finished laying out after this tick
+    requestAnimationFrame(syncLaneAlignment);
   }
 
   // Make event lanes share the chart's plot area horizontally so chips
-  // line up under their corresponding x positions on the curve. Reads the
-  // chart's actual chartArea bounds and writes them as CSS vars.
+  // line up under their corresponding x positions on the curve.
+  // We measure in viewport (document) coordinates so the canvas's outer
+  // padding (.timeline-canvas: padding 14px) is naturally absorbed.
   function syncLaneAlignment() {
     var c = view.timelineChart;
     if (!c || !c.chartArea) return;
-    var canvasW = c.canvas.clientWidth;
-    if (!canvasW) return;
-    var leftPx = Math.round(c.chartArea.left);
-    var rightGap = Math.round(canvasW - c.chartArea.right);
     var lanes = $('event-lanes');
     if (!lanes) return;
-    lanes.style.setProperty('--lane-label-w', leftPx + 'px');
+    var canvasRect = c.canvas.getBoundingClientRect();
+    var lanesRect  = lanes.getBoundingClientRect();
+    if (!canvasRect.width || !lanesRect.width) return;
+    // Plot-area edges in viewport coordinates:
+    var plotLeftVp  = canvasRect.left + c.chartArea.left;
+    var plotRightVp = canvasRect.left + c.chartArea.right;
+    // Express as offsets from the lanes' own bounding box:
+    var leftOffset = Math.round(plotLeftVp - lanesRect.left);
+    var rightGap   = Math.round(lanesRect.right - plotRightVp);
+    lanes.style.setProperty('--lane-label-w', leftOffset + 'px');
     lanes.style.setProperty('--track-right', rightGap + 'px');
   }
 
