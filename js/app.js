@@ -50,7 +50,10 @@
     horizonMin: 720,            // total cook timeline (selectable: 6/12/18/24h)
     overrides: {                // user-editable inputs that override preset.inputs
       tAmbF: 70,
-      weightLb: 12
+      weightLb: 12,
+      tPitInitF: 70,            // pit temp at t=0 (default = ambient)
+      tMeatInitF: 40,           // meat temp at t=0 (cold-from-fridge default)
+      tStartMin: 5 * 60 + 30    // wall-clock minute-of-day for cook start (5:30 AM)
     },
     samples: [],
     timelineChart: null,
@@ -99,10 +102,12 @@
   // Returns the final state. Updates view.sim and view.samples.
   function replayCook() {
     if (!view.preset) return null;
-    // Layer user overrides (ambient air, weight) on top of preset inputs.
+    // Layer user overrides on top of preset inputs.
     var inputs = Object.assign({}, view.preset.inputs, {
-      tAmbF: view.overrides.tAmbF,
-      weightLb: view.overrides.weightLb
+      tAmbF:      view.overrides.tAmbF,
+      weightLb:   view.overrides.weightLb,
+      tPitInitF:  view.overrides.tPitInitF,
+      tInitF:     view.overrides.tMeatInitF
     });
     var fresh = Sim.create(inputs);
     fresh.damperPct = view.preset.policy.damperPct;
@@ -360,8 +365,9 @@
 
   function updateUI() {
     if (!view.sim) return;
-    $('metric-clock').textContent = formatClock(view.cursorMin) + ' ⏱';
-    $('metric-phase').textContent = 'Cursor / 光标';
+    var clock = formatClockOfDay(view.overrides.tStartMin + view.cursorMin);
+    $('metric-clock').textContent = clock;
+    $('metric-phase').textContent = '+' + formatClock(view.cursorMin) + ' · 光标';
     // Find pit/meat at cursor by looking up the closest sample
     var atCursor = sampleAtTime(view.cursorMin);
     $('metric-pit').textContent = Math.round(atCursor.pit) + 'F';
@@ -410,7 +416,10 @@
         plugins: {
           legend: { align: 'start', labels: { boxWidth: 10, color: css('--text-secondary', '#475569'), font: { size: 12 } } },
           tooltip: { callbacks: {
-            title: function (items) { return formatClock(items[0].parsed.x); },
+            title: function (items) {
+              var v = items[0].parsed.x;
+              return formatClockOfDay(view.overrides.tStartMin + v) + '  (+' + formatClock(v) + ')';
+            },
             label: function (ctx) { return ctx.dataset.label + ' ' + Math.round(ctx.parsed.y) + 'F'; }
           } },
           annotation: { annotations: {} }
@@ -418,8 +427,15 @@
         scales: {
           x: { type: 'linear', min: 0, max: 720,
                grid: { color: css('--chart-grid', 'rgba(15,23,42,0.09)') },
-               ticks: { color: css('--text-muted', '#94A3B8'),
-                        callback: function (v) { return formatClock(v); }, maxTicksLimit: 9 } },
+               ticks: {
+                 color: css('--text-muted', '#94A3B8'),
+                 maxTicksLimit: 9,
+                 // Dual labels: clock-of-day on top line, relative h:mm below.
+                 callback: function (v) {
+                   var clock = formatClockOfDay(view.overrides.tStartMin + v);
+                   return [clock, '+' + formatClock(v)];
+                 }
+               } },
           y: { min: 30, max: 330,
                grid: { color: css('--chart-grid', 'rgba(15,23,42,0.09)') },
                ticks: { color: css('--text-muted', '#94A3B8'),
@@ -480,11 +496,13 @@
       };
     });
     // Cursor — vertical solid line, distinct color
+    var cursorLabel = '▼ ' + formatClockOfDay(view.overrides.tStartMin + view.cursorMin)
+                    + ' (+' + formatClock(view.cursorMin) + ')';
     ann['cursor'] = {
       type: 'line', scaleID: 'x', value: view.cursorMin,
       borderColor: '#0F172A', borderWidth: 2,
       drawTime: 'afterDatasetsDraw',
-      label: { display: true, content: '▼ ' + formatClock(view.cursorMin),
+      label: { display: true, content: cursorLabel,
                position: 'end', backgroundColor: '#0F172A', color: '#fff',
                font: { size: 10, weight: '700' }, padding: 3, borderRadius: 2 }
     };
@@ -676,39 +694,62 @@
   }
 
   function bindOverrideInputs() {
-    var amb = $('in-ambient');
-    var wt  = $('in-weight');
-    if (amb) {
-      amb.value = view.overrides.tAmbF;
-      amb.addEventListener('change', function () {
-        var v = parseFloat(amb.value);
+    function bindNumber(id, key, lo, hi) {
+      var el = $(id);
+      if (!el) return;
+      el.value = view.overrides[key];
+      el.addEventListener('change', function () {
+        var v = parseFloat(el.value);
         if (isFinite(v)) {
-          view.overrides.tAmbF = clamp(v, 20, 110);
-          amb.value = view.overrides.tAmbF;
+          view.overrides[key] = clamp(v, lo, hi);
+          el.value = view.overrides[key];
           rerender(true);
         }
       });
     }
-    if (wt) {
-      wt.value = view.overrides.weightLb;
-      wt.addEventListener('change', function () {
-        var v = parseFloat(wt.value);
-        if (isFinite(v)) {
-          view.overrides.weightLb = clamp(v, 2, 20);
-          wt.value = view.overrides.weightLb;
-          rerender(true);
+    bindNumber('in-ambient',   'tAmbF',     20, 110);
+    bindNumber('in-weight',    'weightLb',   2,  20);
+    bindNumber('in-pit-init',  'tPitInitF', 20, 300);
+    bindNumber('in-meat-init', 'tMeatInitF',20, 120);
+
+    var st = $('in-start-time');
+    if (st) {
+      st.value = formatStartTime(view.overrides.tStartMin);
+      st.addEventListener('change', function () {
+        var parts = st.value.split(':');
+        if (parts.length === 2) {
+          view.overrides.tStartMin = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+          rerender(true);   // x-axis ticks change
         }
       });
     }
   }
 
+  function formatStartTime(minutesOfDay) {
+    var h = Math.floor(minutesOfDay / 60) % 24;
+    var m = minutesOfDay % 60;
+    return (h < 10 ? '0' + h : h) + ':' + (m < 10 ? '0' + m : m);
+  }
+  function formatClockOfDay(minutesOfDay) {
+    var d = ((minutesOfDay % 1440) + 1440) % 1440;
+    var h = Math.floor(d / 60);
+    var m = Math.round(d % 60);
+    return h + ':' + (m < 10 ? '0' + m : m);
+  }
+
   function resetToPresetDefaults() {
     view.preset = Presets.get(view.presetId);
-    // Seed the override inputs from preset if user hasn't customised
-    view.overrides.weightLb = view.preset.inputs.weightLb;
-    view.overrides.tAmbF    = view.preset.inputs.tAmbF;
-    var amb = $('in-ambient'); if (amb) amb.value = view.overrides.tAmbF;
-    var wt  = $('in-weight');  if (wt)  wt.value  = view.overrides.weightLb;
+    // Seed override inputs from preset (Pit₀ defaults to ambient)
+    view.overrides.weightLb   = view.preset.inputs.weightLb;
+    view.overrides.tAmbF      = view.preset.inputs.tAmbF;
+    view.overrides.tPitInitF  = view.preset.inputs.tAmbF;
+    view.overrides.tMeatInitF = view.preset.inputs.tInitF != null ? view.preset.inputs.tInitF : 40;
+    // Reflect in DOM
+    var amb = $('in-ambient');   if (amb) amb.value   = view.overrides.tAmbF;
+    var wt  = $('in-weight');    if (wt)  wt.value    = view.overrides.weightLb;
+    var pi  = $('in-pit-init');  if (pi)  pi.value    = view.overrides.tPitInitF;
+    var mi  = $('in-meat-init'); if (mi)  mi.value    = view.overrides.tMeatInitF;
+    var st  = $('in-start-time');if (st)  st.value    = formatStartTime(view.overrides.tStartMin);
     view.events = defaultEventsForPreset(view.preset);
     view.cursorMin = 0;
     rerender(true);

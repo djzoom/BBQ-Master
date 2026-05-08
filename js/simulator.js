@@ -63,8 +63,11 @@ window.SmokerSim.simulator = (function () {
       spritzEndMin:  0,
       spritzCount:   0,
 
-      // Pit starts at ambient — heat only enters via ignite/refuel events.
-      tPitC:         C.fToC(inputs.tAmbF != null ? inputs.tAmbF : 70),
+      // Pit starts at user-specified pit-initial (default = ambient).
+      // Heat then enters only via ignite/refuel events.
+      tPitC:         C.fToC(inputs.tPitInitF != null
+                              ? inputs.tPitInitF
+                              : (inputs.tAmbF != null ? inputs.tAmbF : 70)),
       coals:         [],
       damperPct:     60,
       woodAdds:      [],

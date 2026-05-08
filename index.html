@@ -37,9 +37,23 @@
           <option value="backyard">Backyard quick</option>
           <option value="custom">Custom</option>
         </select>
+        <label class="inline-input" title="Wall-clock start of cook">
+          <span>Start</span>
+          <input id="in-start-time" type="time" value="05:30">
+        </label>
         <label class="inline-input" title="Ambient air temperature">
           <span>Air</span>
           <input id="in-ambient" type="number" min="20" max="110" step="1" value="70" inputmode="numeric">
+          <em>°F</em>
+        </label>
+        <label class="inline-input" title="Initial pit temperature (often = ambient unless preheated)">
+          <span>Pit₀</span>
+          <input id="in-pit-init" type="number" min="20" max="300" step="1" value="70" inputmode="numeric">
+          <em>°F</em>
+        </label>
+        <label class="inline-input" title="Initial meat temperature (cold-from-fridge ~40, room-temp ~65)">
+          <span>Meat₀</span>
+          <input id="in-meat-init" type="number" min="20" max="120" step="1" value="40" inputmode="numeric">
           <em>°F</em>
         </label>
         <label class="inline-input" title="Brisket weight">
@@ -124,7 +138,7 @@
 <script src="js/notify.js?v=1"></script>
 
 <!-- UI controller -->
-<script src="js/app.js?v=11"></script>
+<script src="js/app.js?v=12"></script>
 
 </body>
 </html>
