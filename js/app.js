@@ -42,6 +42,24 @@
     lang: (function () { try { return localStorage.getItem('smoker.lang') || 'zh'; } catch (e) { return 'zh'; } })()
   };
 
+  // FSM gates: which phase(s) allow each event. Buttons disabled when
+  // their gate fails — the simulator is honest about invalid actions
+  // (you can't slice raw meat, you can't unwrap if you never wrapped).
+  var EVENT_GATES = {
+    paper:  function (ph) { return ph === 'bark' || ph === 'stall'; },
+    foil:   function (ph) { return ph === 'bark' || ph === 'stall' || ph === 'push'; },
+    bare:   function (ph) { return ph === 'push' || ph === 'finish'; },
+    pull:   function (ph) { return ph === 'stall' || ph === 'push' || ph === 'finish'; },
+    slice:  function (ph) { return ph === 'rest'; },
+    spritz: function (ph) { return ph === 'bark' || ph === 'stall'; },
+    tallow: function (ph) { return ph === 'stall' || ph === 'push'; },
+    wood:   function (ph) { return ph !== 'startup' && ph !== 'rest' && ph !== 'finish'; }
+  };
+  function eventEnabled(id, ph) {
+    var gate = EVENT_GATES[id];
+    return !gate || gate(ph);
+  }
+
   var PHASES = {
     startup: { cls: 'phase-startup', icon: '⚫', zh: '待引火',     en: 'Awaiting ignition' },
     light:   { cls: 'phase-light',   icon: '🔥', zh: '引火中',     en: 'Lighting fire' },
@@ -207,6 +225,15 @@
       toast('Cleared ' + n + ' event' + (n === 1 ? '' : 's'));
       rerender(false); return;
     }
+    // FSM gating: refuse if the cook isn't in a phase that allows this event.
+    var phNow = detectPhase(view.sim);
+    if (!eventEnabled(id, phNow)) {
+      var why = view.lang === 'zh'
+        ? '当前阶段（' + (PHASES[phNow] && PHASES[phNow].zh) + '）不允许这个动作'
+        : 'not available in current phase (' + phNow + ')';
+      toast(why);
+      return;
+    }
     pushHistory();
     var t = view.cursorMin;
     switch (id) {
@@ -298,13 +325,16 @@
     var smokeBad  = s.smoke ? s.smoke.bad  : 0;
     var burn      = s.burnLevel || 0;
     var creosote  = s.creosote || 0;
+    var barkQ     = s.barkQuality != null ? s.barkQuality : 1.0;
+    var sugar     = s.sugarBurn || 0;
     // Thermal abuse multiplier: burn=0.5 zeros bark, halves tender/juicy.
     var abuseMul = Math.max(0, 1 - burn * 1.8);
     var tender = clamp(((s.C || 0) / 0.85) * 100, 0, 100) * abuseMul;
     var juicy  = clamp((water / 0.75) * 100, 0, 100) * Math.max(0.2, abuseMul);
     var doneness = clamp(100 - Math.abs(coreF - 203) * 2.5, 0, 100);
     var smoke = clamp(smokeGood * 60 - smokeBad * 35 - creosote * 80, 0, 100);
-    var bark = clamp((s.crust || 0) * 90 + smokeGood * 15, 0, 100) * abuseMul;
+    // Bark = crust integral × Maillard quality × abuse, − sugar scorch.
+    var bark = clamp(((s.crust || 0) * 90 + smokeGood * 15) * barkQ - sugar * 70, 0, 100) * abuseMul;
     return { doneness: doneness, tender: tender, juicy: juicy, bark: bark, smoke: smoke, burn: burn, creosote: creosote };
   }
 
@@ -382,6 +412,16 @@
       pill.className = 'phase-pill ' + P.cls;
       pill.textContent = P.icon + ' ' + (view.lang === 'zh' ? P.zh : P.en);
     }
+
+    // Disable buttons whose FSM gate doesn't pass in the current phase.
+    // Onboarding pulse: when the cook is empty, glow the Preheat button.
+    var firstAction = view.events.length === 0;
+    document.querySelectorAll('[data-event]').forEach(function (btn) {
+      var id = btn.dataset.event;
+      var ok = eventEnabled(id, phaseId);
+      btn.classList.toggle('disabled', !ok);
+      btn.classList.toggle('pulse-cta', firstAction && id === 'refuel-8');
+    });
 
     var ai = aiSuggestion(view.sim, phaseId);
     if ($('ai-verdict'))    $('ai-verdict').textContent    = ai.verdict;

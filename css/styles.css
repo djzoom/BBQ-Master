@@ -594,6 +594,26 @@ button.event-chip:active { cursor: grabbing; filter: brightness(0.92); }
   font-size: 13px;
 }
 
+/* ====== FSM GATING — disabled state and onboarding pulse ====== */
+.dock-btn.disabled,
+.event-btn.disabled {
+  opacity: 0.32;
+  cursor: not-allowed;
+  filter: grayscale(0.5);
+}
+.dock-btn.disabled:hover,
+.event-btn.disabled:hover { filter: grayscale(0.5) brightness(0.95); transform: none; }
+
+@keyframes pulseCTA {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(232, 118, 58, 0.55); }
+  50%      { box-shadow: 0 0 0 14px rgba(232, 118, 58, 0); }
+}
+.dock-btn.pulse-cta,
+.event-btn.pulse-cta {
+  animation: pulseCTA 1.6s ease-out infinite;
+  border: 1px solid var(--ember);
+}
+
 /* ====== TOAST ====== */
 .app-toast {
   position: fixed;
