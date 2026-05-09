@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,800&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/styles.css?v=5">
+<link rel="stylesheet" href="css/styles.css?v=6">
 </head>
 <body>
 
@@ -23,13 +23,11 @@
 
 <main class="dashboard">
 
-  <!-- Phase pill + clock (hidden legacy IDs preserved for app.js) -->
   <div class="phase-bar">
     <span id="phase-pill" class="phase-pill phase-startup">⚫ 待引火</span>
     <span class="phase-meta"><span id="metric-clock">5:30</span> · <span id="metric-phase">cursor</span></span>
   </div>
 
-  <!-- HERO 3 metrics: Pit / Meat / ETA -->
   <section class="hero">
     <div class="hero-cell hero-pit">
       <div class="hero-label">PIT · 炉温</div>
@@ -48,7 +46,6 @@
     </div>
   </section>
 
-  <!-- AI Pitmaster card -->
   <section class="ai-card" id="ai-card">
     <div class="ai-head">
       <span>🔥 PITMASTER · 烤肉师傅</span>
@@ -58,50 +55,35 @@
     <p class="ai-why" id="ai-why">8 块备长炭在桶式炉里峰值约 240°F。等它到稳态再上肉。</p>
   </section>
 
-  <!-- TIMELINE chart + lanes -->
   <section class="chart-card">
     <div class="chart-head">
       <span>TIMELINE · 时间轴</span>
-      <select id="in-horizon">
-        <option value="360">6 h</option>
-        <option value="720" selected>12 h</option>
-        <option value="1080">18 h</option>
-        <option value="1440">24 h</option>
-      </select>
+      <select id="in-horizon"><option value="360">6 h</option><option value="720" selected>12 h</option><option value="1080">18 h</option><option value="1440">24 h</option></select>
     </div>
-    <div class="chart-canvas-wrap">
-      <canvas id="chart-timeline"></canvas>
-    </div>
+    <div class="chart-canvas-wrap"><canvas id="chart-timeline"></canvas></div>
     <div class="event-lanes" id="event-lanes"></div>
   </section>
 
-  <!-- PRIMARY DOCK — 4 most-used actions, big buttons -->
   <section class="dock-primary">
     <button class="dock-btn dock-fire"     data-event="refuel-4">🔥 +4 炭</button>
     <button class="dock-btn dock-fire"     data-event="refuel-8">🔥 +8 预热</button>
-    <button class="dock-btn dock-wrap"     data-event="paper">📦 届夫纸</button>
+    <button class="dock-btn dock-wrap"     data-event="paper">📦 屠夫纸</button>
     <button class="dock-btn dock-handling" data-event="pull">✓ 出炉</button>
   </section>
 
-  <!-- SECONDARY DOCK — collapsed -->
   <details class="pro-section" id="more-actions">
     <summary><span>更多操作 · More actions</span></summary>
     <div class="dock-secondary" id="event-dock"></div>
     <div class="ladder-row">
       <span class="ladder-tag">加炭节奏 · LADDER</span>
-      from
-      <input id="in-ladder-start" type="number" min="0" max="1440" step="15" value="0">
-      to
-      <input id="in-ladder-end" type="number" min="0" max="1440" step="15" value="720"> min
-      every
-      <input id="in-ladder-period" type="number" min="10" max="180" step="5" value="45"> min
-      +
-      <input id="in-ladder-count" type="number" min="1" max="12" step="1" value="4"> coal
+      from <input id="in-ladder-start" type="number" min="0" max="1440" step="15" value="0">
+      to <input id="in-ladder-end" type="number" min="0" max="1440" step="15" value="720"> min
+      every <input id="in-ladder-period" type="number" min="10" max="180" step="5" value="45"> min
+      + <input id="in-ladder-count" type="number" min="1" max="12" step="1" value="4"> coal
       <button id="btn-ladder" class="primary-btn">应用</button>
     </div>
   </details>
 
-  <!-- PHYSICS DIAGNOSTICS — collapsed -->
   <details class="pro-section">
     <summary><span>物理诊断 · Physics</span></summary>
     <div class="diag-grid">
@@ -114,13 +96,10 @@
     <div class="score-line">综合 <strong id="score-overall">--</strong> / 100</div>
   </details>
 
-  <!-- SETUP — collapsed -->
   <details class="pro-section">
     <summary><span>烧烤设置 · Setup</span></summary>
     <div class="setup-grid">
-      <label class="num-cell"><span>预设</span>
-        <select id="in-preset"><option value="texas">Texas brisket</option></select>
-      </label>
+      <label class="num-cell"><span>预设</span><select id="in-preset"><option value="texas">Texas brisket</option></select></label>
       <label class="num-cell"><span>开始时间</span><input id="in-start-time" type="time" value="05:30"></label>
       <label class="num-cell"><span>气温 °F</span><input id="in-ambient" type="number" min="20" max="110" step="1" value="70"></label>
       <label class="num-cell"><span>炉初始 °F</span><input id="in-pit-init" type="number" min="20" max="300" step="1" value="70"></label>
@@ -132,11 +111,8 @@
 
 </main>
 
-<!-- libraries -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.1.0/dist/chartjs-plugin-annotation.min.js"></script>
-
-<!-- physics + logic -->
 <script src="js/constants.js"></script>
 <script src="js/heatDiffusion.js"></script>
 <script src="js/stallModel.js"></script>
@@ -152,9 +128,7 @@
 <script src="js/decisions.js?v=3"></script>
 <script src="js/presets.js?v=3"></script>
 <script src="js/notify.js?v=1"></script>
-
-<!-- UI controller -->
-<script src="js/app.js?v=20"></script>
+<script src="js/app.js?v=21"></script>
 
 </body>
 </html>
