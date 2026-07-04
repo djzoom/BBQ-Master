@@ -34,13 +34,19 @@ window.SmokerSim.simulator = (function () {
     var n = C.N_NODES;
     var dx = halfThickM / n;
     var tInitC = C.fToC(inputs.tInitF != null ? inputs.tInitF : 40);
+    var weightLb = inputs.weightLb || 10;
+    // Exposed surface area scales with mass under geometric similarity
+    // (A ∝ m^(2/3)), anchored at the calibration point 10 lb ≈ 0.07 m² (700 cm²).
+    // Keeps the reference cook exact while adjusting heat-in and moisture-loss
+    // per-mass for larger/smaller cuts.
+    var areaM2 = 0.07 * Math.pow(weightLb / 10, 2 / 3);
     return {
       // Inputs locked in
       alpha:         alpha,
       halfThickM:    halfThickM,
       dx:            dx,
-      weightLb:      inputs.weightLb || 10,
-      areaM2:        0.07,                     // placeholder: 10 lb brisket ≈ 700 cm²
+      weightLb:      weightLb,
+      areaM2:        areaM2,
       tAmbC:         C.fToC(inputs.tAmbF != null ? inputs.tAmbF : 70),
       humidityPct:   inputs.humidityPct || 50,
       windMph:       inputs.windMph || 2,
